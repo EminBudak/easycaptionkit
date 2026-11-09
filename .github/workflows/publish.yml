@@ -35,7 +35,7 @@ jobs:
       # A Japanese font as well: the test of a list's first font draws Japanese captions,
       # and the runner has no font for them.
       - name: Install ffmpeg and a Japanese font
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk && ffmpeg -version | head -1
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk ffmpeg && ffmpeg -version | head -1
 
       - name: Test
         run: npm test
