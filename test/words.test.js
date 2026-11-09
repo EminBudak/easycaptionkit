@@ -561,7 +561,7 @@ test("a pipe that goes on past what words take is stopped there, words can come 
     const child = spawn(process.execPath, [require("./helpers").CLI, "subtitles", waiting, "--out", folder], { stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     child.stderr.on("data", (d) => (stderr += d));
-    const ended = new Promise((resolve) => child.on("exit", (code, sig) => resolve({ code, signal: sig })));
+    const ended = new Promise((resolve) => child.on("close", (code, sig) => resolve({ code, signal: sig })));
     // Once the kit listens for SIGINT and SIGTERM, as Linux's /proc shows, and a moment more for it to
     // reach the pipe; a busy machine starts Node slowly. Elsewhere, two seconds.
     const listening = () => {
