@@ -421,10 +421,50 @@ test("a letter for which fontconfig gives no font libass can draw, a color emoji
   assert.equal(events[1], "👍🏽 {\\fnThumb Test\\fs84}👍");
   assert.deepEqual(missingNotes(letters.missing), [
     "libass draws no color emoji, and this machine has no other font that draws the 3 emoji in captions 1 and 2 (🚀 🔥 👍🏽) whole, so the video shows boxes for them. Leave out --libass to have Chrome draw them.",
-    "No font on this machine that libass can use has 1 letter of caption 3 (ᚠ), so the video shows a box for it.",
+    "No font on this machine that libass can use has 1 letter of caption 3 (ᚠ), so the video shows a box for it. Install a font that has it, such as a Noto font for its script, or give --fonts an easyfontkit folder whose font has it, and run again.",
   ]);
   assert.deepEqual(missingNotes([{ letter: "🚀", cue: 4 }]), ["libass draws no color emoji, and this machine has no other font that draws the emoji in caption 4 (🚀) whole, so the video shows a box for it. Leave out --libass to have Chrome draw it."]);
   assert.deepEqual(missingNotes([]), []);
+});
+
+test("a letter no font on this machine has is a box without asking fontconfig, so every one is counted, past the 64 letters fontconfig is asked about, as the eighty kanji of a Japanese caption on a machine with no Japanese font are", () => {
+  const { assLetters } = require("../skills/easycaptionkit/scripts/lib/subtitles");
+  const { missingNotes } = require("../skills/easycaptionkit/scripts/lib/caption");
+  const four = save("lacks-four.ttf", sfnt(tables()));
+  const cyrillic = save("lacks-cyrillic.ttf", sfnt({ ...tables(), cmap: cmapOf([[0x416, 0x416]]) }));
+  // fontconfig gives a font without a letter no font has, as it gives
+  // one for every letter.
+  const asked = [];
+  const give = (code) => {
+    asked.push(code);
+    return { family: "Cyrillic Test", style: "Bold", file: cyrillic, index: 0, outline: true };
+  };
+  const kanji = Array.from({ length: 80 }, (_, i) => String.fromCodePoint(0x4e00 + i));
+  const lacks = (code) => code >= 0x4e00 && code < 0x4e00 + 80;
+  const look = { family: "Four", from: "machine", weight: 700, faces: [], textColor: "#ffffff", highlight: "#ffd23f", highlightMode: "text", highlightInk: "#ffd23f", box: false, tool: "easycaptionkit test" };
+  const words = [...Array.from({ length: 8 }, (_, i) => ({ text: kanji.slice(i * 10, i * 10 + 10).join(""), start: i * 0.5, end: i * 0.5 + 0.5, seg: i, timed: true })), { text: "Ж", start: 4, end: 4.5, seg: 8, timed: true }];
+  const cues = buildCues(words, { lines: 1, maxChars: 20, hard: true, duration: 5 });
+  assert.equal(cues.length, 9);
+  const letters = assLetters(cues, assFont(look, { family: "Four Test", file: four, index: 0 }, { fallback: give, lacks }));
+  assert.equal(letters.missing.length, 80);
+  assert.deepEqual([...new Set(letters.missing.map((m) => m.letter))], kanji);
+  // Ж, the 81st letter the font lacks, is still set in the font that has it.
+  assert.deepEqual(letters.fallbacks, [{ family: "Cyrillic Test", letters: 1 }]);
+  assert.deepEqual(asked, [0x416], "fontconfig was asked only about the letter a font has");
+  assert.deepEqual([letters.total, letters.own], [81, 0]);
+  assert.deepEqual(missingNotes(letters.missing), ["No font on this machine that libass can use has 80 letters of captions 1, 2, 3, 4, 5, 6 and 2 more (一 丁 丂 七 丄 丅 丆 万 and 72 more), so the video shows boxes for them. Install a font that has them, such as Noto Sans CJK (fonts-noto-cjk on Debian and Ubuntu), or give --fonts an easyfontkit folder whose font has them, and run again."]);
+});
+
+test("a no-break hyphen no font on this machine has is no box where the font has the plain hyphen, which HarfBuzz draws for it, as Liberation Sans has from 2.1; a font with neither shows a box", () => {
+  const { assLetters } = require("../skills/easycaptionkit/scripts/lib/subtitles");
+  const hyphen = save("hyphen-plain.ttf", sfnt({ ...tables(), cmap: cmapOf([[0x41, 0x41], [0x2010, 0x2010]]) }));
+  const neither = save("hyphen-none.ttf", sfnt({ ...tables(), cmap: cmapOf([[0x41, 0x41]]) }));
+  const look = { family: "Four", from: "machine", weight: 700, faces: [], textColor: "#ffffff", highlight: "#ffd23f", highlightMode: "text", highlightInk: "#ffd23f", box: false, tool: "easycaptionkit test" };
+  const cues = buildCues([{ text: "A\u2011A", start: 0.5, end: 1, seg: 0, timed: true }], { lines: 1, maxChars: 8, hard: true, duration: 2 });
+  const letters = (file) => assLetters(cues, assFont(look, { family: "Four Test", file, index: 0 }, { fallback: () => null, lacks: () => true }));
+  assert.deepEqual(letters(hyphen).missing, []);
+  assert.equal(letters(hyphen).own, 3);
+  assert.deepEqual(letters(neither).missing, [{ letter: "\u2011", cue: 1 }]);
 });
 
 test("on macOS and Windows, where fontconfig cannot say which font libass draws an emoji with, the emoji are named as ones that can show as boxes", () => {

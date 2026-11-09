@@ -1586,6 +1586,86 @@ test("a font that drew none of the letters, as a Latin font draws no Japanese or
   assert.match(summary({ dir: "out", facts: missing }), /\n {2}Font {6}Geist 700 \(not on this machine: Noto Sans CJK JP drew them\)\n/);
 });
 
+test("CAPTIONS.md and the summary say which letters the video shows as boxes, the ones Chrome found no font for or no font libass can use has, and what to do; the fonts they name drew the others, and no font libass set some of them in is said to set them all", () => {
+  const { captionsMarkdown } = require("../skills/easycaptionkit/scripts/lib/report");
+  const { summary } = require("../skills/easycaptionkit/scripts/easycaptionkit");
+  const { boxesNotes } = require("../skills/easycaptionkit/scripts/lib/caption");
+  const place = require("../skills/easycaptionkit/scripts/lib/places").captionLayout(1080, 1920, ["tiktok"], { style: "line", size: 6.5, lines: 2 });
+  const plain = { family: "", weight: 700, from: "default", faces: [], textColor: "#ffffff", highlight: "#ffd23f", highlightMode: "text", box: false, license: null };
+  const facts = (more) => ({
+    tool: "easycaptionkit test", out: "out", video: { file: "v.mp4" }, output: { width: 1080, height: 1920, fps: 30, duration: 3, encoder: "libx264", audio: [] },
+    source: { file: "ja.srt", about: "an SRT file", count: 2, byWord: false }, style: "line", drawnWith: "chrome", look: plain,
+    places: place.zones, layout: { ...place, zones: undefined, maxChars: 14, lines: 2 }, band: null, reach: null, cues: [{ n: 1 }], sheet: 1, moment: 1,
+    reading: { median: 10, fastest: 10, comfort: 17, limit: 20, fast: [] }, notes: [], fontFirst: "Liberation Sans", fontsDrawn: [], ...more,
+  });
+  const look = (f) => captionsMarkdown(f).split("## Look\n\n")[1].split("\n- Size")[0];
+  const font = (f) => summary({ dir: "out", facts: f }).split("\n").find((line) => line.startsWith("  Font"));
+  const ja = Array.from("今日はいい天気ですね。", (letter) => ({ letter, cue: 1 }));
+  const box = (cue) => [{ letter: "\u{10fffd}", cue }];
+  const first = "- Font: Liberation Sans 700, the first of the common sans fonts easycaptionkit asks for that this machine has.";
+  // Japanese on a machine with no Japanese font: Chrome named Liberation
+  // Sans for every letter, which has none of them, and drew boxes.
+  const all = facts({ boxes: ja });
+  assert.equal(look(all), `${first}\n  Chrome found no font on this machine for 11 letters of caption 1 (今 日 は い 天 気 で す and 2 more), so it drew a box for each of them.`);
+  assert.equal(font(all), "  Font      Liberation Sans");
+  assert.deepEqual(boxesNotes(ja), ["Chrome found no font on this machine for 11 letters of caption 1 (今 日 は い 天 気 で す and 2 more), so it drew a box for each of them. Install a font that has them, such as Noto Sans CJK (fonts-noto-cjk on Debian and Ubuntu), or give --fonts an easyfontkit folder whose font has them, and run again."]);
+  // Some letters drawn: what the fonts drew is counted of the others.
+  const some = facts({ fontsDrawn: [{ family: "Liberation Sans", glyphs: 5, custom: false }, { family: "DejaVu Sans", glyphs: 2, custom: false }], boxes: ja.slice(0, 3) });
+  assert.equal(look(some), `${first}\n  Chrome found no font on this machine for 3 letters of caption 1 (今 日 は), so it drew a box for each of them.\n  Chrome drew 5 of the other 7 letters with it, and the 2 it lacks with DejaVu Sans.`);
+  assert.equal(font(some), "  Font      Liberation Sans; Chrome drew 2 letters it lacks with DejaVu Sans");
+  const others = facts({ fontsDrawn: [{ family: "DejaVu Sans", glyphs: 4, custom: false }], boxes: box(1) });
+  assert.match(look(others), /\n {2}It has none of the other 4 letters, so Chrome drew them with DejaVu Sans\.$/);
+  assert.equal(font(others), "  Font      Liberation Sans, which has none of these letters: DejaVu Sans drew all but the boxes");
+  assert.match(look(facts({ fontFirst: "", fontsDrawn: [{ family: "DejaVu Sans", glyphs: 4, custom: false }], boxes: box(1) })), /\n {2}Chrome drew the other 4 letters with DejaVu Sans\.$/);
+  // A font of fonts.css that drew every letter that shows, or none of them.
+  const kit = { ...plain, family: "Inter", from: "fonts.css", faces: [{ file: "/k/files/inter.woff2", name: "files/inter.woff2" }] };
+  assert.equal(look(facts({ look: kit, fontFirst: "Inter", fontsDrawn: [{ family: "Inter", glyphs: 9, custom: true }], boxes: box(1) })), "- Font: Inter 700, from fonts.css (files/inter.woff2).\n  Chrome found no font on this machine for 1 letter of caption 1 (\u{10fffd}), so it drew a box for it.\n  Chrome drew all the other letters with it.");
+  assert.match(look(facts({ look: kit, fontsDrawn: [{ family: "Noto Sans CJK JP", glyphs: 9, custom: false }], boxes: box(1) })), /\n {2}Chrome drew none of the other letters with the file of Inter: Noto Sans CJK JP drew them\.$/);
+  // A font asked for by name that this machine does not have, and one it has.
+  const geist = { ...plain, family: "Geist", from: "machine" };
+  const missing = "- Font: Geist 700 was asked for by name, and this machine does not have it. Give easyfontkit's folder with --fonts to burn the real font.";
+  assert.equal(look(facts({ look: geist, boxes: ja })), `${missing}\n  Chrome found no font on this machine for 11 letters of caption 1 (今 日 は い 天 気 で す and 2 more), so it drew a box for each of them.`);
+  const elsewhere = facts({ look: geist, fontsDrawn: [{ family: "Liberation Sans", glyphs: 5, custom: false }], boxes: box(2) });
+  assert.equal(look(elsewhere), `${missing}\n  Chrome found no font on this machine for 1 letter of caption 2 (\u{10fffd}), so it drew a box for it.\n  Chrome drew the other letters with Liberation Sans.`);
+  assert.equal(font(elsewhere), "  Font      Geist 700 (not on this machine: Liberation Sans drew all but the boxes)");
+  // Every letter a box: no font drew any, and the one asked for by name is still not here.
+  assert.equal(font(facts({ look: geist, boxes: ja })), "  Font      Geist 700 (not on this machine)");
+  const named = { ...plain, family: "Liberation Sans", from: "machine" };
+  assert.equal(look(facts({ look: named, boxes: ja })), "- Font: Liberation Sans 700, as installed on this machine.\n  Chrome found no font on this machine for 11 letters of caption 1 (今 日 は い 天 気 で す and 2 more), so it drew a box for each of them.");
+  const has = facts({ look: named, fontsDrawn: [{ family: "Noto Sans CJK JP", postScriptName: "NotoSansCJKjp-Bold", glyphs: 27, custom: false }], boxes: box(2) });
+  assert.equal(look(has), "- Font: Liberation Sans 700, as installed on this machine.\n  Chrome found no font on this machine for 1 letter of caption 2 (\u{10fffd}), so it drew a box for it.\n  It has none of the other 27 letters, so Chrome drew them with Noto Sans CJK JP.");
+  assert.equal(font(has), "  Font      Liberation Sans 700 (it has none of these letters: Noto Sans CJK JP drew all but the boxes)");
+  // libass, on a machine with no Japanese font: the full stop is set in
+  // Noto Sans Mongolian, which has it, and the rest show as boxes, so
+  // that font is not said to set them all.
+  const arial = { family: "Liberation Sans", style: "Bold", file: "/f/LiberationSans-Bold.ttf", index: 0 };
+  const libass = facts({ drawnWith: "libass", fontFirst: "", libassFont: arial, assFallbacks: [{ family: "Noto Sans Mongolian", letters: 1 }], assLetters: { total: 11, own: 0 }, boxes: ja.slice(0, 10) });
+  assert.equal(look(libass), "- Font: Arial 700, as captions.ass asks for it by name. fontconfig, which libass looks fonts up through on Linux, gives Liberation Sans Bold for that name.\n  No font on this machine that libass can use has 10 letters of caption 1 (今 日 は い 天 気 で す and 1 more), so the video shows boxes for them.\n  captions.ass sets 1 letter the font lacks in Noto Sans Mongolian, which fontconfig gives for it, at the size that makes it a 70 px letter too.");
+  assert.equal(font(libass), "  Font      Arial, asked for by name (fontconfig gives Liberation Sans); captions.ass sets 1 letter it lacks in Noto Sans Mongolian");
+  const brand = { family: "Brand Sans", weight: 400, from: "fonts.css", faces: [{ family: "Brand Sans", file: "/k/files/brand.woff2", name: "files/brand.woff2", weight: [400, 400], italic: false }], textColor: "#ffffff", highlight: "#ffd23f", highlightMode: "text", box: false, license: { family: "Brand Sans", status: "commercial", name: "", url: "https://example.com/eula", maker: "", copyright: "", basis: "", from: "", free: null } };
+  const license = (f) => captionsMarkdown(f).split("## Font license\n\n")[1].split("\n\n## ")[0];
+  const brandLibass = facts({ look: brand, drawnWith: "libass", fontFirst: "", libassFont: null, assFallbacks: [{ family: "Noto Sans Mongolian", letters: 1 }], assLetters: { total: 11, own: 0 } });
+  assert.match(license(brandLibass), /captions\.ass sets them all in Noto Sans Mongolian/);
+  assert.match(font(brandLibass), /which has none of these letters: captions\.ass sets them in Noto Sans Mongolian$/);
+  const brandBoxes = { ...brandLibass, boxes: ja.slice(0, 10) };
+  assert.doesNotMatch(license(brandBoxes), /sets them all in/);
+  assert.match(license(brandBoxes), /carry the font's letters into every copy/);
+  assert.match(font(brandBoxes), /; captions\.ass sets 1 letter it lacks in Noto Sans Mongolian$/);
+  // With Chrome, the fonts that drew the rest are not said to have drawn the boxes too.
+  const brandChrome = facts({ look: brand, fontFirst: "Liberation Sans", fontsDrawn: [{ family: "Noto Sans", glyphs: 1, custom: false }] });
+  assert.match(license(brandChrome), /no letter of it is in the video, since it has none of these letters: Chrome drew them all with Noto Sans/);
+  assert.match(license({ ...brandChrome, boxes: ja.slice(0, 10) }), /no letter of it is in the video, since it has none of these letters: Chrome drew all but the boxes with Noto Sans/);
+  // What to do: an emoji font for emoji alone, a font for their script for any other letters.
+  assert.deepEqual(boxesNotes([{ letter: "🚀", cue: 2 }]), ["Chrome found no font on this machine for 1 letter of caption 2 (🚀), so it drew a box for it. Install a color emoji font, such as Noto Color Emoji (fonts-noto-color-emoji on Debian and Ubuntu), and run again."]);
+  assert.match(boxesNotes([{ letter: "1\ufe0f\u20e3", cue: 2 }])[0], /Install a color emoji font/);
+  assert.deepEqual(boxesNotes([{ letter: "ᚠ", cue: 1 }, { letter: "ᚢ", cue: 3 }]), ["Chrome found no font on this machine for 2 letters of captions 1 and 3 (ᚠ ᚢ), so it drew a box for each of them. Install a font that has them, such as a Noto font for their script, or give --fonts an easyfontkit folder whose font has them, and run again."]);
+  // The long vowel mark and the middle dot are of no one script, and Japanese all the same.
+  assert.match(boxesNotes(Array.from("コーヒー・ｶﾀｶﾅ、", (letter) => ({ letter, cue: 1 })))[0], /such as Noto Sans CJK \(fonts-noto-cjk on Debian and Ubuntu\)/);
+  assert.deepEqual(boxesNotes([]), []);
+  // Without boxes, nothing of this is said.
+  assert.doesNotMatch(captionsMarkdown(facts({ fontsDrawn: [{ family: "Liberation Sans", glyphs: 5, custom: false }] })), /box|no font on this machine/i);
+});
+
 test("CAPTIONS.md and the summary say what drew the letters when the font asked for is not there or is a variable font libass draws, where the captions reach, and commands that run from where the run was made", () => {
   const { captionsMarkdown, subtitlesMarkdown } = require("../skills/easycaptionkit/scripts/lib/report");
   const { summary } = require("../skills/easycaptionkit/scripts/easycaptionkit");

@@ -12,7 +12,8 @@ const crypto = require("node:crypto");
 const { loadWords, handFixed, wordsSha256, FORMATS, MOST_OPENED, DEEPEST } = require("./words");
 const { cjkLanguage, arabicIn, scriptsIn } = require("./text");
 const { buildCues, states: makeStates, readingSpeed } = require("./cues");
-const { srt, vtt, ass, assFont, estimatedScales, shrunkOf, assLetters, SRT_SPECIAL } = require("./subtitles");
+const { srt, vtt, ass, assFont, kitLetters, estimatedScales, shrunkOf, assLetters, SRT_SPECIAL } = require("./subtitles");
+const { machineLetters, chromeBoxes, boxesIn } = require("./boxes");
 const { captionLayout, charsThatFit, defaultPlaces, shapeOf } = require("./places");
 const { chooseLook, variableFace, machineFont, fallbackFont } = require("./look");
 const { fontLike } = require("./fontfile");
@@ -20,7 +21,7 @@ const ffmpeg = require("./ffmpeg");
 const { findChrome, missingChrome, chromeNamedNothing, tempProblem } = require("./chrome");
 const { renderStates } = require("./render");
 const { safeZonesPng, sheetPng, plainPictures, shotOf } = require("./draw");
-const { captionsMarkdown, captionsJson, subtitlesMarkdown, arg, subtitlesCommand, shown } = require("./report");
+const { captionsMarkdown, captionsJson, subtitlesMarkdown, arg, subtitlesCommand, shown, captionsOf, lettersOf, boxesText, installText } = require("./report");
 const { jsonShape, jsonProblem, decodeText } = require("./files");
 const { stopAll } = require("./running");
 const version = require("./version");
@@ -862,28 +863,24 @@ function specialNote(cues) {
 
 // The letters libass drew boxes for, since this machine has no font it
 // can draw them with, as notes: emoji, which libass draws in no color
-// font, and any other letters. `missing` and `unsure` are assLetters':
-// where nothing says which font an emoji goes in, as on macOS and Windows,
-// the note says it can be a box.
+// font, and any other letters, with what to do. `missing` and `unsure`
+// are assLetters': where nothing says which font an emoji goes in, as on
+// macOS and Windows, the note says it can be a box.
 const EMOJI = /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
 function missingNotes(missing, unsure = []) {
-  const where = (items) => {
-    const cues = [...new Set(items.map((m) => m.cue))];
-    return `${cues.length === 1 ? "caption" : "captions"} ${cues.length > 6 ? `${cues.slice(0, 6).join(", ")} and ${cues.length - 6} more` : list(cues.map(String))}`;
-  };
-  const which = (items) => {
-    const letters = [...new Set(items.map((m) => m.letter))];
-    return letters.length > 8 ? `${letters.slice(0, 8).join(" ")} and ${letters.length - 8} more` : letters.join(" ");
-  };
   const boxes = (n) => (n === 1 ? "a box for it" : "boxes for them");
   const emoji = missing.filter((m) => EMOJI.test(m.letter));
   const other = missing.filter((m) => !EMOJI.test(m.letter));
   const notes = [];
-  if (emoji.length) notes.push(`libass draws no color emoji, and this machine has no other font that draws ${emoji.length === 1 ? "the emoji" : `the ${emoji.length} emoji`} in ${where(emoji)} (${which(emoji)}) whole, so the video shows ${boxes(emoji.length)}. Leave out --libass to have Chrome draw ${emoji.length === 1 ? "it" : "them"}.`);
-  if (other.length) notes.push(`No font on this machine that libass can use has ${count(other.length, "letter", "letters")} of ${where(other)} (${which(other)}), so the video shows ${boxes(other.length)}.`);
-  if (unsure.length) notes.push(`libass draws no color emoji, so ${unsure.length === 1 ? "the emoji" : `the ${unsure.length} emoji`} in ${where(unsure)} (${which(unsure)}) can show as ${unsure.length === 1 ? "a box" : "boxes"}: nothing on this machine says which font libass draws ${unsure.length === 1 ? "it" : "them"} with. Leave out --libass to have Chrome draw ${unsure.length === 1 ? "it" : "them"}.`);
+  if (emoji.length) notes.push(`libass draws no color emoji, and this machine has no other font that draws ${emoji.length === 1 ? "the emoji" : `the ${emoji.length} emoji`} in ${captionsOf(emoji)} (${lettersOf(emoji)}) whole, so the video shows ${boxes(emoji.length)}. Leave out --libass to have Chrome draw ${emoji.length === 1 ? "it" : "them"}.`);
+  if (other.length) notes.push(`${boxesText(other, "libass")} ${installText(other)}`);
+  if (unsure.length) notes.push(`libass draws no color emoji, so ${unsure.length === 1 ? "the emoji" : `the ${unsure.length} emoji`} in ${captionsOf(unsure)} (${lettersOf(unsure)}) can show as ${unsure.length === 1 ? "a box" : "boxes"}: nothing on this machine says which font libass draws ${unsure.length === 1 ? "it" : "them"} with. Leave out --libass to have Chrome draw ${unsure.length === 1 ? "it" : "them"}.`);
   return notes;
 }
+
+// The letters Chrome drew as boxes, [{ letter, cue }], as a note: which,
+// and what to do.
+const boxesNotes = (boxes) => (boxes.length ? [`${boxesText(boxes, "chrome")} ${installText(boxes)}`] : []);
 
 // The folder of a fonts.css font's files, which ffmpeg's ass filter finds
 // the font of captions.ass in when it is its fontsdir, from the output
@@ -1024,8 +1021,14 @@ async function captionVideo(videoFile, options) {
     // The font captions.ass names, as libass and players that read ASS
     // make it: a font asked for by name is what this machine gives for it.
     const libassFont = look.from === "fonts.css" ? null : machineFont(look.family || "Arial", look.weight);
-    const font = assFont(look, libassFont, { fallback: givenFor(look) });
+    // libass finds a font through fontconfig for each letter its own font
+    // lacks: one no font on this machine has, as fontconfig lists them, is
+    // a box, which needs no asking.
+    const every = useLibass ? machineLetters() : null;
+    const font = assFont(look, libassFont, { fallback: givenFor(look), lacks: every ? (code) => !every(code) : null });
     const letters = assLetters(cues, font);
+    // The letters the video shows as boxes, [{ letter, cue }].
+    let boxes = useLibass ? letters.missing : [];
     // captions.ass names the video's own matrix and range for players; the
     // file libass burns can name others, and give other colors (assColors).
     const assFile = (scales, { level = 1, matrix = color.header, tint = null } = {}) => ass(cues, words, { states, style: options.style, look: { ...look, tool: TOOL }, place, title: titled, level, scales, font, matrix, tint });
@@ -1069,7 +1072,7 @@ async function captionVideo(videoFile, options) {
     } else {
       log(`Drawing ${count(states.length, "caption state", "caption states")} in Chrome`);
       try {
-        drawn = await renderStates({ cues, words, states, style: options.style, look, place, duration: video.duration, dir: run.work, log });
+        drawn = await renderStates({ cues, words, states, style: options.style, look, place, duration: video.duration, dir: run.work, log, boxed: (all, fonts) => chromeBoxes(all, fonts, { kit: kitLetters(look) }) });
       } catch (err) {
         // A Chrome that cannot start here (no usable sandbox, as in a
         // container) stops the run before the encode; libass needs none. A
@@ -1085,6 +1088,8 @@ async function captionVideo(videoFile, options) {
       notes.push(...made.notes);
       sound = made.tracks;
       frameTags = made.frameTags;
+      boxes = boxesIn(cues, drawn.boxes);
+      notes.push(...boxesNotes(boxes));
       if (drawn.failedFonts.length) notes.push(`Chrome could not load the font ${[...new Set(drawn.failedFonts)].join(", ")}; the next font in the list drew the captions.`);
       if (drawn.shrunk) notes.push(`${drawn.shrunk} ${drawn.shrunk === 1 ? `${unit[0]} was` : `${unit[1]} were`} wider than the safe space and drawn smaller to fit, ${drawn.shrunk === 1 ? "at" : "the smallest at"} ${percentOf(drawn.smallest)}% of the size.`);
     }
@@ -1155,6 +1160,7 @@ async function captionVideo(videoFile, options) {
       states: drawn ? drawn.states : states.length,
       fontsDrawn: drawn ? drawn.fonts : [],
       fontFirst: drawn ? drawn.first : "",
+      boxes,
       libassFont: useLibass ? libassFont : null,
       // The name captions.ass gives the font, from its file for fonts.css,
       // and the fonts it sets the letters in that the font lacks.
@@ -1403,4 +1409,4 @@ async function makeSubtitles(wordsFile, options) {
   }
 }
 
-module.exports = { captionVideo, makeSubtitles, slug, notAddresses, writable, guard, recover, begin, finish, abandon, frameFor, encodingLine, percentOf, missingNotes, signalsOf, stopOnSignals, stopped, began, OUTPUTS, TOOL, shown, named };
+module.exports = { captionVideo, makeSubtitles, slug, notAddresses, writable, guard, recover, begin, finish, abandon, frameFor, encodingLine, percentOf, missingNotes, boxesNotes, signalsOf, stopOnSignals, stopped, began, OUTPUTS, TOOL, shown, named };

@@ -19,6 +19,41 @@ const clock = (t) => {
 };
 const list = (items) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+// The captions letters are in, of [{ letter, cue }], as a note says them:
+// "caption 3", "captions 1, 2 and 5", or the first six and how many more.
+function captionsOf(items) {
+  const cues = [...new Set(items.map((m) => m.cue))];
+  return `${cues.length === 1 ? "caption" : "captions"} ${cues.length > 6 ? `${cues.slice(0, 6).join(", ")} and ${cues.length - 6} more` : list(cues.map(String))}`;
+}
+
+// The letters themselves, each once: all of them, or the first eight and
+// how many more.
+function lettersOf(items) {
+  const letters = [...new Set(items.map((m) => m.letter))];
+  return letters.length > 8 ? `${letters.slice(0, 8).join(" ")} and ${letters.length - 8} more` : letters.join(" ");
+}
+
+// The letters the video shows as boxes, [{ letter, cue }], as a sentence:
+// Chrome found no font for them, or no font libass can use has them.
+function boxesText(boxes, drawnWith) {
+  const n = boxes.length;
+  if (drawnWith === "libass") return `No font on this machine that libass can use has ${plural(n, "letter", "letters")} of ${captionsOf(boxes)} (${lettersOf(boxes)}), so the video shows ${n === 1 ? "a box for it" : "boxes for them"}.`;
+  return `Chrome found no font on this machine for ${plural(n, "letter", "letters")} of ${captionsOf(boxes)} (${lettersOf(boxes)}), so it drew a box for ${n === 1 ? "it" : "each of them"}.`;
+}
+
+// What to do about letters no font here has: install one that has them,
+// named where one font covers them all, as Noto Sans CJK covers Chinese,
+// Japanese and Korean, or give a font kit whose font has them.
+const CJK = /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}　-〿＀-￯]/u;
+const PICTURE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u;
+function installText(items) {
+  const letters = items.map((m) => m.letter);
+  const them = letters.length === 1 ? "it" : "them";
+  if (letters.every((c) => PICTURE.test(c))) return "Install a color emoji font, such as Noto Color Emoji (fonts-noto-color-emoji on Debian and Ubuntu), and run again.";
+  const font = letters.every((c) => CJK.test(c)) ? "Noto Sans CJK (fonts-noto-cjk on Debian and Ubuntu)" : `a Noto font for ${letters.length === 1 ? "its" : "their"} script`;
+  return `Install a font that has ${them}, such as ${font}, or give --fonts an easyfontkit folder whose font has ${them}, and run again.`;
+}
 // A name on one line of Markdown or of the terminal: its control
 // characters become a space, as a line break in it would end a heading or
 // a list item, or start a line of its own in a message, and an escape
@@ -197,17 +232,24 @@ function fallbackLine(f) {
   const n = fb.reduce((a, b) => a + b.letters, 0);
   const where = `in ${list(fb.map((x) => x.family))}, which fontconfig gives for ${n === 1 ? "it" : "them"}, at the size that makes ${n === 1 ? "it a" : "them"} ${f.layout.fontPx} px ${n === 1 ? "letter" : "letters"} too.`;
   if (setsNone(f)) return `The font has none of the ${plural(n, "letter", "letters")}: captions.ass sets ${n === 1 ? "it" : "them"} ${where}`;
-  return `captions.ass sets the ${plural(n, "letter", "letters")} the font lacks ${where}`;
+  // Where the video shows boxes too, the font lacks more letters than these.
+  return `captions.ass sets ${boxedIn(f) ? "" : "the "}${plural(n, "letter", "letters")} the font lacks ${where}`;
 }
 
 // Whether the font captions.ass names sets any letter of the captions,
-// and whether it sets none and other fonts set them.
+// and whether it sets none and other fonts set them all, with no letter
+// libass showed as a box.
 const setsAny = (f) => !f.assLetters || f.assLetters.own > 0;
-const setsNone = (f) => !setsAny(f) && (f.assFallbacks || []).length > 0;
+const setsNone = (f) => !setsAny(f) && (f.assFallbacks || []).length > 0 && !boxedIn(f);
+
+// Whether the video shows letters as boxes.
+const boxedIn = (f) => (f.boxes || []).length > 0;
 
 // The font the captions were drawn with: none named, the first of the
 // common sans fonts this machine has, which Chrome found for Latin
-// letters, and the fonts that drew the letters it lacks.
+// letters, and the fonts that drew the letters it lacks. The letters the
+// video shows as boxes, which no font drew, are said after the font, and
+// the letters counted after them are the others.
 function fontLines(f) {
   const lines = [];
   const look = f.look;
@@ -217,25 +259,28 @@ function fontLines(f) {
   const m = libass ? f.libassFont || null : null;
   const fill = (fonts) => list(fonts.map((x) => (fonts.length > 1 ? `${x.family} (${x.glyphs})` : x.family)));
   const filled = libass && fallbackLine(f) ? [`  ${fallbackLine(f)}`] : [];
+  const boxed = boxedIn(f) ? [`  ${boxesText(f.boxes, f.drawnWith)}`] : [];
+  const other = boxed.length ? "other " : "";
+  const ofAll = boxed.length ? `of the other ${total}` : `of ${total}`;
   if (!look.family) {
     if (libass) {
-      lines.push(`- Font: Arial ${look.weight}, as captions.ass asks for it by name. ${m && sameName(m.family, "Arial") ? "This machine has it." : givenFor(m)}`, ...filled);
+      lines.push(`- Font: Arial ${look.weight}, as captions.ass asks for it by name. ${m && sameName(m.family, "Arial") ? "This machine has it." : givenFor(m)}`, ...boxed, ...filled);
       return lines;
     }
     // Chrome did not say which font is the first of the list: the fonts
     // that drew, and none named as that one.
     const first = f.fontFirst || "";
     if (!first) {
-      lines.push(`- Font: a common sans ${look.weight}, the first of the common sans fonts easycaptionkit asks for that this machine has.`);
-      if (drawn.length) lines.push(`  Chrome drew the ${total} letters with ${fill(drawn)}.`);
+      lines.push(`- Font: a common sans ${look.weight}, the first of the common sans fonts easycaptionkit asks for that this machine has.`, ...boxed);
+      if (drawn.length) lines.push(`  Chrome drew the ${other}${total} letters with ${fill(drawn)}.`);
       return lines;
     }
-    lines.push(`- Font: ${first} ${look.weight}, the first of the common sans fonts easycaptionkit asks for that this machine has.`);
+    lines.push(`- Font: ${first} ${look.weight}, the first of the common sans fonts easycaptionkit asks for that this machine has.`, ...boxed);
     const own = drawn.find((x) => x.family === first);
     const others = drawn.filter((x) => x.family !== first);
     if (others.length) {
       const rest = total - (own ? own.glyphs : 0);
-      lines.push(own ? `  Chrome drew ${own.glyphs} of ${total} letters with it, and the ${rest} it lacks with ${fill(others)}.` : `  It has none of the ${total} letters, so Chrome drew them with ${fill(others)}.`);
+      lines.push(own ? `  Chrome drew ${own.glyphs} ${ofAll} letters with it, and the ${rest} it lacks with ${fill(others)}.` : `  It has none of the ${other}${total} letters, so Chrome drew them with ${fill(others)}.`);
     }
     lines.push(...lighterLines(look, others));
     return lines;
@@ -246,12 +291,20 @@ function fontLines(f) {
       if (m && sameName(m.family, look.family)) lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine.`);
       else if (m) lines.push(`- Font: ${look.family} ${look.weight} was asked for by name, and this machine does not have it: ${givenFor(m)} Give easyfontkit's folder with --fonts to burn the real font.`);
       else lines.push(`- Font: ${look.family} ${look.weight}, asked for by name. ${givenFor(m)}`);
-      lines.push(...filled);
+      lines.push(...boxed, ...filled);
+      return lines;
+    }
+    // Not on this machine: Chrome drew the letters with other fonts, or
+    // drew every letter as a box, and its first font is another.
+    const absent = !machineHas(f) && (drawn.length ? !drawn.some((x) => drewWith(x, look)) : boxed.length > 0);
+    if (absent) {
+      if (boxed.length) lines.push(`- Font: ${look.family} ${look.weight} was asked for by name, and this machine does not have it. Give easyfontkit's folder with --fonts to burn the real font.`, ...boxed, ...(drawn.length ? [`  Chrome drew the other letters with ${fill(drawn)}.`] : []));
+      else lines.push(`- Font: ${look.family} ${look.weight} was asked for by name, and this machine does not have it, so Chrome drew the letters with ${fill(drawn)}. Give easyfontkit's folder with --fonts to burn the real font.`);
       return lines;
     }
     if (drawn.length && !drawn.some((x) => drewWith(x, look))) {
-      if (machineHas(f)) lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine. It has none of the ${total} letters, so Chrome drew them with ${fill(drawn)}.`, ...lighterLines(look, drawn));
-      else lines.push(`- Font: ${look.family} ${look.weight} was asked for by name, and this machine does not have it, so Chrome drew the letters with ${fill(drawn)}. Give easyfontkit's folder with --fonts to burn the real font.`);
+      if (boxed.length) lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine.`, ...boxed, `  It has none of the other ${total} letters, so Chrome drew them with ${fill(drawn)}.`, ...lighterLines(look, drawn));
+      else lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine. It has none of the ${total} letters, so Chrome drew them with ${fill(drawn)}.`, ...lighterLines(look, drawn));
       return lines;
     }
     lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine.`);
@@ -260,18 +313,19 @@ function fontLines(f) {
     lines.push(`- Font: ${look.family}, from ${files}. That file holds the weights ${face.weight[0]} to ${face.weight[1]}, and libass draws such a file at its default weight, not at ${look.weight}, so the letters are thinner than Chrome draws them.`);
   } else lines.push(`- Font: ${look.family} ${look.weight}, from ${files}.`);
   if (f.assFamily && !sameName(f.assFamily, look.family)) lines.push(`  captions.ass names it ${f.assFamily}, the family name in its file, which libass and the players that read ASS find a font by.`);
-  if (libass) lines.push("  libass drew the letters and does not say which font drew each.", ...filled);
+  if (libass) lines.push("  libass drew the letters and does not say which font drew each.", ...boxed, ...filled);
+  else lines.push(...boxed);
   if (!drawn.length) return lines;
   // A font file of fonts.css is the only web font on the page, and Chrome
   // names it by the family in the file, which fonts.css can call
   // otherwise.
   const own = drawn.filter((x) => drewWith(x, look));
   const others = drawn.filter((x) => !drewWith(x, look));
-  if (!own.length) lines.push(`  Chrome drew no letter with the file of ${look.family}: ${drawn[0].family} drew them.`);
-  else if (!others.length) lines.push("  Chrome drew every letter with it.");
+  if (!own.length) lines.push(`  Chrome drew ${boxed.length ? "none of the other letters" : "no letter"} with the file of ${look.family}: ${drawn[0].family} drew them.`);
+  else if (!others.length) lines.push(boxed.length ? "  Chrome drew all the other letters with it." : "  Chrome drew every letter with it.");
   else {
     const mine = own.reduce((a, b) => a + b.glyphs, 0);
-    lines.push(`  Chrome drew ${mine} of ${total} letters with it, and the ${total - mine} it lacks with ${fill(others)}.`);
+    lines.push(`  Chrome drew ${mine} ${ofAll} letters with it, and the ${total - mine} it lacks with ${fill(others)}.`);
   }
   lines.push(...lighterLines(look, others));
   return lines;
@@ -341,7 +395,7 @@ function licenseSection(f) {
   // ones that drew them are, whatever its license.
   const instead = drewNone(f);
   if (instead.length) {
-    const drew = libass ? "captions.ass sets them all in" : "Chrome drew them all with";
+    const drew = libass ? "captions.ass sets them all in" : boxedIn(f) ? "Chrome drew all but the boxes with" : "Chrome drew them all with";
     // A font asked for by name that this machine has, or one from fonts.css, lacks the letters.
     const lacks = look.from === "fonts.css" || (libass ? f.libassFont && sameName(f.libassFont.family, look.family) : machineHas(f));
     const lead = read ? `${read}, but no letter of it is in the video` : `No letter of ${look.family} is in the video`;
@@ -601,4 +655,4 @@ function captionsJson(f) {
   };
 }
 
-module.exports = { captionsMarkdown, subtitlesMarkdown, captionsJson, marginsText, drewWith, setsAny, setsNone, machineHas, arg, quote, code, clock, subtitlesCommand, programOf, shown, soundText };
+module.exports = { captionsMarkdown, subtitlesMarkdown, captionsJson, marginsText, drewWith, setsAny, setsNone, boxedIn, machineHas, captionsOf, lettersOf, boxesText, installText, arg, quote, code, clock, subtitlesCommand, programOf, shown, soundText };

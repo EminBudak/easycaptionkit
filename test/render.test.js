@@ -17,6 +17,7 @@ const h = require("./helpers");
 
 // Chrome found the way the kit finds it.
 const skip = (!h.hasFfmpeg && "needs ffmpeg") || (!findChrome() && "needs Chrome");
+const hasFontconfig = process.platform === "linux" && spawnSync("fc-list", ["--version"], { stdio: "ignore" }).status === 0;
 const out = (name) => path.join(h.dir, name);
 const files = (folder) => fs.readdirSync(folder).sort();
 
@@ -1814,12 +1815,14 @@ test("subtitles only: the files from the words, for a video's size, the video un
   }
 });
 
-test("Chrome names the fonts of a text every time it is asked, the first font of the list too: the text is laid out before Chrome is asked", { skip }, async () => {
+test("Chrome names the fonts of a text every time it is asked, the first font of the list too: the text is laid out before Chrome is asked; on a machine with no Japanese font, the letters no font has are boxes, and the fonts named drew only the others", { skip }, async () => {
   const { renderStates, fontsOf } = require("../skills/easycaptionkit/scripts/lib/render");
   const { launch, openPage } = require("../skills/easycaptionkit/scripts/lib/chrome");
   const { buildCues, states } = require("../skills/easycaptionkit/scripts/lib/cues");
   const { chooseLook } = require("../skills/easycaptionkit/scripts/lib/look");
   const { captionLayout } = require("../skills/easycaptionkit/scripts/lib/places");
+  const { chromeBoxes, machineLetters } = require("../skills/easycaptionkit/scripts/lib/boxes");
+  const { kitLetters } = require("../skills/easycaptionkit/scripts/lib/subtitles");
   // A text set and asked about at once, over and over: Chrome lays a text
   // out only at its next frame, and says nothing of one it has not.
   const page = out("probe-page.html");
@@ -1839,19 +1842,75 @@ test("Chrome names the fonts of a text every time it is asked, the first font of
   const cues = buildCues(read.words, { lines: 2, maxChars: 14, hard: read.hard, duration: 3 });
   const dir = out("first-font");
   fs.mkdirSync(dir, { recursive: true });
-  const r = await renderStates({ cues, words: read.words, states: states(cues, read.words, "karaoke"), style: "karaoke", look: chooseLook({ lang: "ja" }), place, duration: 3, dir });
+  // The letters that came out as boxes are told as a run tells them.
+  const look = chooseLook({ lang: "ja" });
+  const r = await renderStates({ cues, words: read.words, states: states(cues, read.words, "karaoke"), style: "karaoke", look, place, duration: 3, dir, boxed: (all, fonts) => chromeBoxes(all, fonts, { kit: kitLetters(look) }) });
   assert.ok(r.first, "Chrome named the first font of the list");
+  assert.match(fs.readFileSync(path.join(dir, "captions-page.html"), "utf8"), /^<!doctype html>\n<html lang="ja">/);
+  const letters = [...cues.map((c) => c.lines.join("")).join("")];
+  // A machine with no Japanese font, as GitHub's runners are without
+  // one installed: Chrome named the first font of the list, a Latin one,
+  // for the letters it found no font for and drew a box for each, which
+  // the run says, and the fonts it names drew only the others.
+  const japanese = spawnSync("fc-list", [":lang=ja", "family", "style"], { encoding: "utf8" }).stdout || "";
+  if (hasFontconfig && !japanese.trim()) {
+    const every = machineLetters();
+    const none = [...new Set(letters)].filter((c) => !every(c.codePointAt(0)));
+    assert.ok(none.length > 0 && none.every((c) => r.boxes.includes(c)), JSON.stringify(r.boxes));
+    assert.equal(r.fonts.reduce((n, f) => n + f.glyphs, 0), letters.filter((c) => !r.boxes.includes(c)).length, JSON.stringify(r.fonts));
+    return;
+  }
+  assert.deepEqual(r.boxes, [], "no letter came out as a box");
   assert.ok(r.fonts.length > 0, "Chrome named the fonts that drew the words");
   // The captions show no space between Japanese words, and Chrome is
   // asked about the letters they show: the first font, a Latin one, drew
   // none of them, and a space is no letter.
   assert.deepEqual(r.fonts.filter((f) => f.family === r.first), [], JSON.stringify(r.fonts));
-  assert.equal(r.fonts.reduce((n, f) => n + f.glyphs, 0), [...cues.map((c) => c.lines.join("")).join("")].length);
+  assert.equal(r.fonts.reduce((n, f) => n + f.glyphs, 0), letters.length);
   // In the bold face of a CJK family this machine has, not its regular one.
-  if (/style=Bold/.test(spawnSync("fc-list", [":lang=ja", "family", "style"], { encoding: "utf8" }).stdout || "")) {
+  if (/style=Bold/.test(japanese)) {
     for (const f of r.fonts) assert.doesNotMatch(f.postScriptName, /-(?:Regular|Light|Medium)$/, JSON.stringify(r.fonts));
   }
-  assert.match(fs.readFileSync(path.join(dir, "captions-page.html"), "utf8"), /^<!doctype html>\n<html lang="ja">/);
+});
+
+test("a letter no font on this machine has, which Chrome draws as a box and says the first font of the list drew, is named with its caption in the notes and CAPTIONS.md with what to do, and the fonts they name drew the others; libass says the same of its boxes, and neither takes a no-break hyphen for one", { skip: skip || (!hasFontconfig && "needs fontconfig") }, function () {
+  // A letter of the last private use plane, which no font has, between
+  // words any font has. A no-break hyphen, which Liberation Sans 2.1
+  // lacks and draws with its plain hyphen, is no box.
+  const video = blackVideo("black-box.mp4", { width: 360, height: 640, seconds: 3 });
+  const words = (name, last) => h.write(name, [{ text: "Ship", start: 0.3, end: 0.8 }, { text: "\u{10fffd}", start: 0.8, end: 1.2 }, { text: last, start: 1.2, end: 2 }]);
+  const plain = words("box-plain.json", "today");
+  const hyphen = words("box-hyphen.json", "to\u2011day");
+  const advice = "Install a font that has it, such as a Noto font for its script, or give --fonts an easyfontkit folder whose font has it, and run again.";
+  const said = "Chrome found no font on this machine for 1 letter of caption 1 (\u{10fffd}), so it drew a box for it.";
+  const boxNotes = (notes) => notes.filter((note) => /\bbox\b/.test(note));
+  for (const [name, file, letters, more] of [["box-chrome", hyphen, 10, []], ["box-kit", plain, 9, ["--fonts", h.fontKit("box-kit-fonts")]]]) {
+    const c = caption([video, "--words", file, "--style", "line", ...more, "--out", out(name)]);
+    assert.ok(c.notes.includes(`${said} ${advice}`), JSON.stringify(c.notes));
+    assert.equal(boxNotes(c.notes).length, 1, JSON.stringify(c.notes));
+    // The fonts named drew the words, and the box is none of theirs.
+    assert.equal(c.look.drawn.reduce((n, f) => n + f.glyphs, 0), letters, JSON.stringify(c.look.drawn));
+    const md = fs.readFileSync(path.join(out(name), "CAPTIONS.md"), "utf8");
+    const lines = md.split("## Look\n\n")[1].split("\n- ")[0].split("\n");
+    assert.match(lines[0], /^- Font: /);
+    assert.equal(lines[1], `  ${said}`, md);
+    // Inter, from fonts.css, drew every letter but the box.
+    if (more.length) assert.deepEqual(lines.slice(2), ["  Chrome drew all the other letters with it."], md);
+    assert.ok(md.includes(`\n- ${said} ${advice}\n`), md);
+  }
+  const libass = caption([video, "--words", hyphen, "--style", "line", "--libass", "--out", out("box-libass")]);
+  const boxed = "No font on this machine that libass can use has 1 letter of caption 1 (\u{10fffd}), so the video shows a box for it.";
+  assert.ok(libass.notes.includes(`${boxed} ${advice}`), JSON.stringify(libass.notes));
+  assert.equal(boxNotes(libass.notes).length, 1, JSON.stringify(libass.notes));
+  assert.ok(fs.readFileSync(path.join(out("box-libass"), "CAPTIONS.md"), "utf8").split("## Look\n\n")[1].includes(`\n  ${boxed}\n`));
+});
+
+test("with --libass, every letter no font on this machine has is counted, past the 64 letters fontconfig is asked about", { skip: skip || (!hasFontconfig && "needs fontconfig") }, function () {
+  const video = blackVideo("black-many-boxes.mp4", { width: 360, height: 640, seconds: 3 });
+  const letters = Array.from({ length: 70 }, (_, i) => String.fromCodePoint(0x10ff00 + i));
+  const words = h.write("many-boxes.json", Array.from({ length: 7 }, (_, i) => ({ text: letters.slice(i * 10, i * 10 + 10).join(""), start: 0.3 + i * 0.3, end: 0.6 + i * 0.3 })));
+  const c = caption([video, "--words", words, "--style", "line", "--libass", "--out", out("many-boxes")]);
+  assert.ok(c.notes.some((note) => note.startsWith("No font on this machine that libass can use has 70 letters of caption")), JSON.stringify(c.notes));
 });
 
 test("a script run in the captions page is waited for as long as it is given, as the fit of a hundred thousand words is given two minutes, where every call to Chrome had 60 s at most", { skip }, async () => {

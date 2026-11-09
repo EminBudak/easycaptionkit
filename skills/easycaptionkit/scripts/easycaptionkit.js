@@ -4,7 +4,7 @@
 const path = require("node:path");
 const version = require("./lib/version");
 const { PLACES, PLACE_NAMES } = require("./lib/places");
-const { drewWith, setsAny, setsNone, machineHas, shown, soundText } = require("./lib/report");
+const { drewWith, setsAny, setsNone, boxedIn, machineHas, shown, soundText } = require("./lib/report");
 const { variableFace, sameName } = require("./lib/look");
 
 const USAGE = `Usage: easycaptionkit <video> --words <file> [options]
@@ -297,7 +297,12 @@ function summary({ dir, facts: f }) {
     // sets them in, which can be all of them, as Japanese over a Latin font.
     const fallbacks = libass ? f.assFallbacks || [] : [];
     const none = libass && setsNone(f);
-    if (!f.look.family) font = libass ? `Arial, asked for by name${m && !sameName(m.family, "Arial") ? ` (fontconfig gives ${m.family})` : ""}` : f.fontFirst ? (drawn.length && !firstDrew ? `${f.fontFirst}, which has none of these letters: ${list(drawn.map((x) => x.family))} drew them` : f.fontFirst) : drawn.length ? `a common sans (${list(drawn.map((x) => x.family))} drew it)` : "a common sans";
+    // Where letters show as boxes, which a note names, the fonts named
+    // drew the others, and the font lacks more letters than they drew.
+    const boxed = boxedIn(f);
+    const them = boxed ? "all but the boxes" : "them";
+    const the = boxed ? "" : "the ";
+    if (!f.look.family) font = libass ? `Arial, asked for by name${m && !sameName(m.family, "Arial") ? ` (fontconfig gives ${m.family})` : ""}` : f.fontFirst ? (drawn.length && !firstDrew ? `${f.fontFirst}, which has none of these letters: ${list(drawn.map((x) => x.family))} drew ${them}` : f.fontFirst) : drawn.length ? `a common sans (${list(drawn.map((x) => x.family))} drew it)` : "a common sans";
     else if (libass && variableFace(f.look) && setsAny(f)) font = `${f.look.family} from fonts.css, which libass draws at its variable file's default weight, not at ${f.look.weight}`;
     else if (libass && f.look.from === "machine") font = `${f.look.family} ${f.look.weight}, asked for by name${!m ? "; libass draws whatever this machine gives for that name" : sameName(m.family, f.look.family) ? "" : ` (not on this machine: fontconfig gives ${m.family})`}`;
     else font = `${f.look.family} ${f.look.weight}${f.look.from === "fonts.css" ? " from fonts.css" : ""}`;
@@ -307,7 +312,7 @@ function summary({ dir, facts: f }) {
     const families = list(fallbacks.map((x) => x.family));
     const set = fallbacks.reduce((a, b) => a + b.letters, 0);
     if (none) font += `, ${renamed ? "and which" : "which"} has none of these letters: captions.ass sets them in ${families}`;
-    else if (fallbacks.length) font += `; captions.ass sets the ${set} ${set === 1 ? "letter" : "letters"} it lacks in ${families}`;
+    else if (fallbacks.length) font += `; captions.ass sets ${the}${set} ${set === 1 ? "letter" : "letters"} it lacks in ${families}`;
     const missing = drawn.length && f.look.family && !drawn.some((x) => drewWith(x, f.look));
     const why = f.look.from !== "machine" ? "its file drew nothing" : machineHas(f) ? "it has none of these letters" : "not on this machine";
     // With Chrome, the fonts that drew the letters the font lacks, where
@@ -315,8 +320,10 @@ function summary({ dir, facts: f }) {
     const own = libass ? [] : drawn.filter((x) => (f.look.family ? drewWith(x, f.look) : x.family === f.fontFirst));
     const others = own.length ? drawn.filter((x) => !own.includes(x)) : [];
     const rest = others.reduce((a, b) => a + b.glyphs, 0);
-    const filled = others.length ? `; Chrome drew the ${rest} ${rest === 1 ? "letter" : "letters"} it lacks with ${list(others.map((x) => (others.length > 1 ? `${x.family} (${x.glyphs})` : x.family)))}` : "";
-    lines.push(`  Font      ${font}${missing ? ` (${why}: ${list(drawn.map((x) => x.family))} drew them)` : filled}`);
+    const filled = others.length ? `; Chrome drew ${the}${rest} ${rest === 1 ? "letter" : "letters"} it lacks with ${list(others.map((x) => (others.length > 1 ? `${x.family} (${x.glyphs})` : x.family)))}` : "";
+    // Every letter a box: the font asked for by name drew none of them either.
+    const gone = !libass && boxed && !drawn.length && f.look.family && f.look.from === "machine" && !machineHas(f);
+    lines.push(`  Font      ${font}${missing ? ` (${why}: ${list(drawn.map((x) => x.family))} drew ${them})` : gone ? " (not on this machine)" : filled}`);
     if (f.style !== "line") lines.push(`  Lit word  ${f.look.highlightMode !== "patch" ? f.look.highlight : libass ? `in a thick border of ${f.look.highlight}` : `on a patch of ${f.look.highlight}`}`);
     lines.push(`  Video     captioned.mp4, ${o.width}x${o.height}, ${o.fps} fps, ${sec(o.duration)}, ${soundText(o.audio)}`);
   }

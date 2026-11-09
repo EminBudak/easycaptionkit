@@ -121,12 +121,10 @@ const styleName = (name) => Boolean(name) && !/[\u0000-\u001f\u007f,]/.test(name
 // with. libass sizes each font by its own heights, so captions.ass sets
 // those letters in that font at a size of its own: the font then has
 // `fallback(c)`, the font a letter is set in, { family, scale, advance },
-// or null.
-function assFont(look, machine = null, { fallback = null, budget = BUDGET } = {}) {
-  const upright = (look.faces || []).filter((f) => !f.italic);
-  const faces = upright.length ? upright : look.faces || [];
-  const nearest = faces.length ? Math.min(...faces.map((f) => distance(f, look.weight))) : 0;
-  const files = faces.filter((f) => distance(f, look.weight) === nearest);
+// or null. `lacks(codePoint)` says no font on this machine has a letter,
+// which then needs no asking (boxes.js).
+function assFont(look, machine = null, { fallback = null, budget = BUDGET, lacks = null } = {}) {
+  const files = facesAt(look);
   const kit = files.length ? familyOf(files, budget) : null;
   const first = kit ? kit.first : machine ? readFont(machine.file, machine.index) : null;
   const scale = first ? assScale(first) : 0;
@@ -135,8 +133,29 @@ function assFont(look, machine = null, { fallback = null, budget = BUDGET } = {}
   const has = kit ? kit.has : (c) => Number.isFinite(first.advance(c));
   const own = kit ? kit.family : "";
   const font = { scale, advance, has, from: files.length ? files[0].name || files[0].file : machine.file, family: styleName(own) ? own : "" };
-  if (fallback) font.fallback = fallbacksOf(fallback);
+  if (fallback) font.fallback = fallbacksOf(fallback, lacks);
   return font;
+}
+
+// The faces of a fonts.css family the captions are drawn with, by Chrome
+// and by libass: the upright ones nearest the weight.
+function facesAt(look) {
+  const upright = (look.faces || []).filter((f) => !f.italic);
+  const faces = upright.length ? upright : look.faces || [];
+  const nearest = faces.length ? Math.min(...faces.map((f) => distance(f, look.weight))) : 0;
+  return faces.filter((f) => distance(f, look.weight) === nearest);
+}
+
+// Whether the files of a fonts.css family the captions are drawn with
+// have a letter, one code point: has(c), or null for a look with no
+// files. A letter is taken to be there when a file that could hold it
+// was not read, as one past what is read of a family: only a letter
+// they are known to lack is not.
+function kitLetters(look, budget = BUDGET) {
+  const files = facesAt(look);
+  if (!files.length) return null;
+  const kit = familyOf(files, budget);
+  return (c) => kit.has(c) || kit.unread(c);
 }
 
 // What is read of a fonts.css family's files in all, at most, counting
@@ -159,10 +178,11 @@ function rangesOf(text) {
 // The files of a fonts.css family at one weight, each read once a letter
 // in its unicode-range is asked for, as Chrome loads them, and no more than
 // `budget` bytes of them in all, files and what they unpack to. { first,
-// family, advance, has }: the first file that reads, which gives the size,
-// and the family name in it or in the next file that has one. A letter in
-// the range of a file that was not read, or is no font this kit reads, is
-// the family's still: libass finds that file by its name.
+// family, advance, has, unread }: the first file that reads, which gives
+// the size, and the family name in it or in the next file that has one.
+// A letter in the range of a file that was not read, or is no font this
+// kit reads, is the family's still: libass finds that file by its name.
+// unread(c) says a file that could hold the letter was not read.
 function familyOf(faces, budget) {
   const list = faces.map((face) => ({ face, ranges: rangesOf(face.unicodeRange), font: undefined }));
   let left = budget;
@@ -179,16 +199,17 @@ function familyOf(faces, budget) {
   const lookUp = (c) => {
     const code = c.codePointAt(0);
     if (known.has(code)) return known.get(code);
-    let found = { advance: NaN, has: false };
+    let found = { advance: NaN, has: false, unread: false };
     for (const item of list) {
       if (!inRange(item, code)) continue;
       const font = fontOf(item);
       const w = font ? font.advance(c) : NaN;
       if (Number.isFinite(w)) {
-        found = { advance: w, has: true };
+        found = { advance: w, has: true, unread: false };
         break;
       }
       if (!font && item.ranges) found.has = true;
+      if (!font) found.unread = true;
     }
     known.set(code, found);
     return found;
@@ -201,7 +222,7 @@ function familyOf(faces, budget) {
     if (font && font.family) family = font.family;
     if (first && family) break;
   }
-  return { first, family, advance: (c) => lookUp(c).advance, has: (c) => lookUp(c).has };
+  return { first, family, advance: (c) => lookUp(c).advance, has: (c) => lookUp(c).has, unread: (c) => lookUp(c).unread };
 }
 
 // A name an override tag can carry: it ends at a backslash or a brace.
@@ -222,13 +243,17 @@ const NONE = Object.freeze({ none: true });
 // that has them all. libass draws no font of pictures alone, as a color
 // emoji font is, and fontconfig gives a font that lacks a letter only
 // when no font has it: `none(c)` says fontconfig gives no font libass can
-// draw the letter with, so libass draws a box for it.
-function fallbacksOf(give) {
+// draw the letter with, so libass draws a box for it. A letter `lacks`
+// says no font on this machine has is one too, without asking, and asks
+// none of the 64: so every such letter is counted, however many there
+// are, as in Japanese on a machine with no Japanese font.
+function fallbacksOf(give, lacks = null) {
   const found = [];
   const asked = new Map();
   const fontFor = (first, arabic) => {
     const code = first.codePointAt(0);
     if (asked.has(code)) return asked.get(code);
+    if (lacks && lacks(code)) return NONE;
     if (asked.size >= 64) return null;
     const given = give(code);
     let got = null;
@@ -450,6 +475,10 @@ function ass(cues, words, { states, style, look, place, title = "", level = 1, s
 // default, one asked for so, or a flag. A © or a ™ is a letter.
 const SHOWN_AS_EMOJI = /\p{Emoji_Presentation}|\ufe0f|\p{Regional_Indicator}/u;
 
+// A no-break hyphen no font here has is no box where the font has the
+// plain hyphen: HarfBuzz, which libass shapes with, draws that for it.
+const hyphenFor = (c, font) => c === "\u2011" && font.has("\u2010");
+
 // How captions.ass sets the letters of the captions, the spaces left out:
 // { total, own, fallbacks, missing, unsure }. own is how many are in the
 // font it names, or where nothing says otherwise; fallbacks the fonts it
@@ -471,7 +500,7 @@ function assLetters(cues, font) {
         const lacks = !font.has(Array.from(c)[0]);
         const other = setIn(c, font, null);
         if (other) counts.set(other.family, (counts.get(other.family) || 0) + 1);
-        else if (font.fallback && lacks && font.fallback.none(c)) missing.push({ letter: c, cue: cue.n });
+        else if (font.fallback && lacks && font.fallback.none(c) && !hyphenFor(c, font)) missing.push({ letter: c, cue: cue.n });
         else {
           own++;
           if (lacks && SHOWN_AS_EMOJI.test(c)) unsure.push({ letter: c, cue: cue.n });
@@ -486,4 +515,4 @@ function assLetters(cues, font) {
 // names, by that font: [{ family, letters }].
 const fallbackLetters = (cues, font) => assLetters(cues, font).fallbacks;
 
-module.exports = { srt, vtt, ass, assFont, estimatedScales, shrunkOf, assLetters, fallbackLetters, clock, assClock, assColor, assTag, dimmed, escapeSrt, SRT_SPECIAL, ARIAL };
+module.exports = { srt, vtt, ass, assFont, kitLetters, estimatedScales, shrunkOf, assLetters, fallbackLetters, clock, assClock, assColor, assTag, dimmed, escapeSrt, SRT_SPECIAL, ARIAL };

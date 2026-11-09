@@ -13,6 +13,7 @@ const { launch, openPage, evaluate } = require("./chrome");
 const { cueLines } = require("./cues");
 const { inkOf } = require("./places");
 const { writeApng } = require("./apng");
+const { clusters } = require("./text");
 
 // The cue's lines as words, each with whether a space goes before it.
 const lineWords = cueLines;
@@ -198,11 +199,14 @@ function pageHtml(look, place, style, data) {
 
 // Draws every state of the timeline to PNGs in `dir` and puts them in one
 // animated PNG. Returns { file, y, height, reach, states, fonts, first,
-// failedFonts, shrunk, scales }: the band the PNGs cover, the rows the
-// captions reach in it, how many states there are, which fonts drew the
-// letters and which of them is the first of the list this machine has,
-// and how many captions had to be drawn smaller to fit.
-async function renderStates({ cues, words, states, style, look, place, duration, dir, log = () => {} }) {
+// failedFonts, shrunk, scales, boxes }: the band the PNGs cover, the rows
+// the captions reach in it, how many states there are, which fonts drew
+// the letters and which of them is the first of the list this machine
+// has, how many captions had to be drawn smaller to fit, and the letters
+// Chrome drew as boxes. `boxed(letters, fonts)` gives those, of the
+// letters of the captions and the fonts Chrome names for them
+// (chromeBoxes); without it, none are.
+async function renderStates({ cues, words, states, style, look, place, duration, dir, log = () => {}, boxed = null }) {
   const W = place.frame.width;
   const H = place.frame.height;
   const ink = place.ink || inkOf(place.fontPx, { style, box: look.box });
@@ -248,7 +252,13 @@ async function renderStates({ cues, words, states, style, look, place, duration,
       })()`,
       60_000,
     );
-    const fonts = await fontsOf(page, probeText);
+    const named = await fontsOf(page, probeText);
+    // A letter no font Chrome found has is a box, which Chrome says the
+    // first font of the list drew. Those letters are left out when it is
+    // asked again, so the fonts it names drew the letters that show.
+    const boxes = boxed ? boxed([...new Set(probeText.split("\n").flatMap((word) => clusters(word)))], named) : [];
+    const rest = boxes.length ? withoutLetters(probeText, new Set(boxes)) : probeText;
+    const fonts = !boxes.length ? named : rest ? await fontsOf(page, rest) : [];
     // The first font of the list this machine has: the one that draws
     // plain Latin letters. The others draw only what it lacks.
     const latin = await fontsOf(page, "Hamburgefonstiv");
@@ -305,11 +315,20 @@ async function renderStates({ cues, words, states, style, look, place, duration,
     const shrunk = all.filter((s) => s < 1).length;
     // The rows every state stays in, its outline and shadow included.
     const reach = Number.isFinite(fit.top) ? { top: Math.max(0, Math.floor(fit.top)), bottom: Math.min(H, Math.ceil(fit.bottom)) } : null;
-    return { file: animation, y, height, reach, states: made.size + 1, fonts, first: latin.length ? latin[0].family : "", failedFonts: loaded || [], shrunk, smallest: all.reduce((a, b) => Math.min(a, b), 1), scales: fit.scales };
+    return { file: animation, y, height, reach, states: made.size + 1, fonts, first: latin.length ? latin[0].family : "", failedFonts: loaded || [], shrunk, smallest: all.reduce((a, b) => Math.min(a, b), 1), scales: fit.scales, boxes };
   } finally {
     await browser.close();
   }
 }
+
+// The words of the probe, one a line, without the letters of `left`: a
+// word of those letters alone goes.
+const withoutLetters = (text, left) =>
+  text
+    .split("\n")
+    .map((word) => clusters(word).filter((c) => !left.has(c)).join(""))
+    .filter(Boolean)
+    .join("\n");
 
 // Which fonts Chrome draws a text with, and how many letters each. Chrome
 // says so only of text it has laid out, and a text just set is laid out at

@@ -568,4 +568,4 @@ function chooseLook(options = {}) {
   };
 }
 
-module.exports = { chooseLook, readBrand, readFontsCss, parseColor, contrast, luminance, highlightMode, brandHighlight, variableFace, machineFont, fallbackFont, sameName, DEFAULT_HIGHLIGHT };
+module.exports = { chooseLook, readBrand, readFontsCss, parseColor, contrast, luminance, highlightMode, brandHighlight, variableFace, machineFont, fallbackFont, fcName, sameName, DEFAULT_HIGHLIGHT };
