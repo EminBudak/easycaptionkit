@@ -645,7 +645,12 @@ function detectJson(data) {
       // `from`: a demo's steps stay steps when their words.json is read
       // again, in its own folder or in another.
       const first = Object.keys(FORMATS).find((key) => key !== "easycaptionkit" && FORMATS[key] === data.from);
-      return shape({ format: "easycaptionkit", words, hard: Boolean(data.hard), fixed: handFixed(data), ...(first ? { first } : {}) }, data.words);
+      // The length steps.json gave the demo's video, which words.json
+      // keeps, so a subtitles run with no video ends the captions there
+      // again, as the run from steps.json did.
+      const length = entry(data.demo) ? numberOf(data.demo.duration) : NaN;
+      const demo = Number.isFinite(length) && length > 0 ? { duration: length, file: "" } : null;
+      return shape({ format: "easycaptionkit", words, hard: Boolean(data.hard), fixed: handFixed(data), ...(first ? { first } : {}), ...(demo ? { video: demo } : {}) }, data.words);
     }
     if (data.kind === "demo" && Array.isArray(data.steps)) return shape({ format: "steps", ...readSteps(data, listed(data.steps, read)) }, data.steps);
     if (Array.isArray(data.transcription)) return shape({ format: "whispercpp", words: readWhisperCpp(listed(data.transcription, read), read) }, data.transcription);
@@ -1083,6 +1088,8 @@ function readWords(file, given = null) {
     // words.json a run writes from them keeps saying.
     fixed: Boolean(found.fixed),
     notes,
+    // The demo's video as steps.json gives it, { duration, file }, also
+    // from a words.json made of steps, which keeps its length.
     video: found.video || null,
   };
 }

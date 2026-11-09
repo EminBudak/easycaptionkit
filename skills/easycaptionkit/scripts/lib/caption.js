@@ -823,15 +823,18 @@ function notStill(video, name) {
 
 // The words, cut to the video: words after its end are left out, a word
 // that runs past it is cut there.
-function fitWords(read, duration) {
+function fitWords(read, duration, givenBy = "") {
   const notes = [];
   if (!Number.isFinite(duration)) return { words: read.words, notes };
   const words = read.words.filter((w) => w.start < duration - 0.05).map((w) => ({ ...w, end: Math.min(w.end, duration) }));
   const dropped = read.words.length - words.length;
-  if (dropped) notes.push(`${dropped} ${dropped === 1 ? "word starts" : "words start"} after the video ends (${duration.toFixed(2)} s) and ${dropped === 1 ? "was" : "were"} left out. Check that the words belong to this video.`);
-  if (!words.length) throw new Error(`Every word starts after the video ends (${duration.toFixed(2)} s). The words file belongs to another video, or its times are in another unit`);
+  // `givenBy`: the file that gives the length where no video was given,
+  // which says nothing of whether its own words belong to its video.
+  const end = `${duration.toFixed(2)} s${givenBy ? `, as ${givenBy} gives its length` : ""}`;
+  if (dropped) notes.push(`${dropped} ${dropped === 1 ? "word starts" : "words start"} after the video ends (${end}) and ${dropped === 1 ? "was" : "were"} left out.${givenBy ? "" : " Check that the words belong to this video."}`);
+  if (!words.length) throw new Error(`Every word starts after the video ends (${end}). The words file belongs to another video, or its times are in another unit`);
   const last = words[words.length - 1].end;
-  if (last < duration * 0.5 && duration > 20) notes.push(`The words end at ${last.toFixed(1)} s, before half of the video (${duration.toFixed(1)} s). Check that they belong to this video.`);
+  if (!givenBy && last < duration * 0.5 && duration > 20) notes.push(`The words end at ${last.toFixed(1)} s, before half of the video (${duration.toFixed(1)} s). Check that they belong to this video.`);
   return { words, notes };
 }
 
@@ -967,7 +970,7 @@ async function captionVideo(videoFile, options) {
   notes.push(...place.notes);
   const fitted = fitWords(read, video.duration);
   notes.push(...fitted.notes);
-  if (read.video && Math.abs(read.video.duration - video.duration) > 0.5) notes.push(`steps.json is for a video ${read.video.duration.toFixed(1)} s long, and this one is ${video.duration.toFixed(1)} s. The captions follow the steps' times.`);
+  if (read.format === "steps" && read.video && Math.abs(read.video.duration - video.duration) > 0.5) notes.push(`steps.json is for a video ${read.video.duration.toFixed(1)} s long, and this one is ${video.duration.toFixed(1)} s. The captions follow the steps' times.`);
   const words = fitted.words;
   log(`Read ${count(words.length, "word", "words")} from ${shown(path.basename(options.words))} (${read.about})`);
   const cues = buildCues(words, { lines, maxChars, hard: read.hard, duration: video.duration });
@@ -1172,7 +1175,7 @@ async function captionVideo(videoFile, options) {
     fs.writeFileSync(path.join(run.work, "CAPTIONS.md"), captionsMarkdown(facts));
     names.push("CAPTIONS.md");
     const files = writtenFiles(run.work, names);
-    fs.writeFileSync(path.join(run.work, "words.json"), JSON.stringify(wordsJson(words, read, files, first), null, 2) + "\n");
+    fs.writeFileSync(path.join(run.work, "words.json"), JSON.stringify(wordsJson(words, read, files, first, video.duration), null, 2) + "\n");
     const json = captionsJson({ ...facts, files: { ...files, ...writtenFiles(run.work, ["words.json"]) } });
     fs.writeFileSync(path.join(run.work, "captions.json"), JSON.stringify(json, null, 2) + "\n");
     names.push("words.json", "captions.json");
@@ -1266,12 +1269,17 @@ function describe(v, rate = null, frames = 0) {
 // firstFormat's), which a run that reads the file again keeps. A word
 // without a time of its own says how it got one: spread over its line by
 // length, or placed between its neighbors, as the file gave it none.
-function wordsJson(words, read, files, first = read.format) {
+// Words of a demo's steps keep `end`, where this run ended the captions:
+// the video's length, or the one steps.json gives without a video. That
+// is `demo`, where a later subtitles run with no video ends them too.
+function wordsJson(words, read, files, first, end) {
   const items = words.map((w) => ({ text: w.text, start: round(w.start), end: round(w.end), ...(w.seg >= 0 ? { seg: w.seg } : {}), ...(w.timed ? {} : w.placed ? { placed: true } : { spread: true }) }));
+  const demo = read.video && Number.isFinite(end) ? end : 0;
   return {
     tool: TOOL,
     from: FORMATS[first] || read.about,
     hard: read.hard,
+    ...(demo > 0 ? { demo: { duration: round(demo) } } : {}),
     // The other files the run wrote, so a folder whose captions.json went
     // is still known as the run's.
     files,
@@ -1323,11 +1331,14 @@ async function makeSubtitles(wordsFile, options) {
   const maxChars = options.maxChars || 42;
   const { place, lines } = cueLayout({ ...options, maxChars }, width, height, places);
   notes.push(...place.notes);
-  const fitted = video ? fitWords(read, video.duration) : { words: read.words, notes: [] };
+  // No caption runs past the video's end: the video's, or with no video
+  // the one steps.json gives the demo's video, as words.json keeps it.
+  const end = video ? video.duration : read.video ? read.video.duration : Infinity;
+  const fitted = fitWords(read, end, video ? "" : shown(path.basename(wordsFile)));
   notes.push(...fitted.notes);
   const words = fitted.words;
   log(`Read ${count(words.length, "word", "words")} from ${shown(path.basename(wordsFile))} (${read.about})`);
-  const shape = { lines: options.style === "word" ? 1 : lines, hard: read.hard, duration: video ? video.duration : Infinity };
+  const shape = { lines: options.style === "word" ? 1 : lines, hard: read.hard, duration: end };
   const cues = buildCues(words, { ...shape, maxChars });
   // Words said after the picture ends, while the sound runs on, are heard.
   if (video && video.soundPast && cues.some((cue) => cue.end > video.picture.end + 0.05)) notes.push(`The video's picture ends at ${video.picture.end.toFixed(2)} s, and its sound runs on to ${video.duration.toFixed(2)} s. The captions go on to the end of the sound, over the last frame, which players hold.`);
@@ -1381,7 +1392,7 @@ async function makeSubtitles(wordsFile, options) {
     };
     fs.writeFileSync(path.join(run.work, "CAPTIONS.md"), subtitlesMarkdown(facts));
     const files = writtenFiles(run.work, ["captions.srt", "captions.vtt", "captions.ass", "CAPTIONS.md"]);
-    fs.writeFileSync(path.join(run.work, "words.json"), JSON.stringify(wordsJson(words, read, files, first), null, 2) + "\n");
+    fs.writeFileSync(path.join(run.work, "words.json"), JSON.stringify(wordsJson(words, read, files, first, end), null, 2) + "\n");
     const json = captionsJson({ ...facts, files: { ...files, ...writtenFiles(run.work, ["words.json"]) } });
     fs.writeFileSync(path.join(run.work, "captions.json"), JSON.stringify(json, null, 2) + "\n");
     await heard();

@@ -1885,6 +1885,70 @@ test("a fast caption of a demo's steps is said to follow the steps, whose words 
   }
 });
 
+test("a subtitles run with no video ends no caption past the length steps.json gives the demo's video, as a run with the video ends none past the video's, and so does the run again from the words.json it wrote, which keeps that length", () => {
+  // The 15 s demo: a note of 48 words held for ten seconds, a wait, and
+  // the last note at 10 s, whose words run to the video's end. Its
+  // caption stayed 0.4 s past it, to 15.4 s, where the video is over.
+  const long = "Acme Notes keeps every note you type, syncs it to each device you own, shares it with your team the moment you save, keeps a full history of every change so nothing is ever lost, lets you search across all of it in an instant, and works offline";
+  const steps = [{ n: 1, action: "visit", label: "Open acme.com", note: long, start: 0, end: 0 }, { n: 2, action: "wait", label: "Wait", start: 0.5, end: 9.5 }, { n: 3, action: "click", label: "Click Pricing", note: "One plan.", start: 10, end: 11 }];
+  const work = path.join(dir, "demo-15s");
+  fs.mkdirSync(work, { recursive: true });
+  const demo = (name, video) => fs.writeFileSync(path.join(work, name), JSON.stringify({ version: 1, kind: "demo", tool: "easyscreenshotkit 0.1.2", ...(video ? { video } : {}), steps }));
+  demo("steps.json", { file: "demo.mp4", width: 1920, height: 1080, fps: 30, duration: 15 });
+  const last = (folder) => JSON.parse(fs.readFileSync(path.join(work, folder, "captions.json"), "utf8")).cues.at(-1);
+  for (const [args, folder] of [[["subtitles", "steps.json", "--out", "first"], "first"], [["subtitles", path.join("first", "words.json"), "--out", "again"], "again"]]) {
+    const r = run(args, { cwd: work });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual([last(folder).text, last(folder).start, last(folder).end], ["One plan.", 10, 15], folder);
+    assert.match(fs.readFileSync(path.join(work, folder, "captions.srt"), "utf8"), /\n00:00:10,000 --> 00:00:15,000\nOne plan\.\n$/, folder);
+    const events = fs.readFileSync(path.join(work, folder, "captions.ass"), "utf8").split("\n").filter((line) => line.startsWith("Dialogue:"));
+    assert.ok(events.every((line) => line.split(",")[2] <= "0:00:15.00"), `${folder}: ${events.at(-1)}`);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(work, folder, "words.json"), "utf8")).demo, { duration: 15 }, folder);
+  }
+  // A steps.json that gives no length leaves the last caption its moment
+  // after its words, which run three seconds from the step's start, and
+  // its words.json gives none.
+  demo("steps-no-length.json", null);
+  const r = run(["subtitles", "steps-no-length.json", "--out", "no-length"], { cwd: work });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(last("no-length").end, 13.4);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(work, "no-length", "words.json"), "utf8")).demo, undefined);
+  // Given a video, its own length is the end, here a shorter one, and
+  // the words.json of that run keeps it.
+  if (hasFfmpeg) {
+    const clip = video({ width: 320, height: 568, seconds: 14, sound: "none", name: "demo-14s.mp4" });
+    const v = run(["subtitles", "steps.json", "--video", clip, "--out", "with-video"], { cwd: work });
+    assert.equal(v.status, 0, v.stderr);
+    assert.ok(last("with-video").end <= 14.001, String(last("with-video").end));
+    const kept = JSON.parse(fs.readFileSync(path.join(work, "with-video", "words.json"), "utf8")).demo;
+    assert.ok(Math.abs(kept.duration - 14) < 0.1, JSON.stringify(kept));
+  }
+});
+
+test("a subtitles run with no video leaves out a step that starts after the length steps.json gives the video, as a run with the video leaves it out, and says so; it does not ask whether a demo's own words belong to it, and a file whose every step starts after that length is refused", () => {
+  const work = path.join(dir, "demo-past-end");
+  fs.mkdirSync(work, { recursive: true });
+  const demo = (name, duration, steps) => fs.writeFileSync(path.join(work, name), JSON.stringify({ version: 1, kind: "demo", tool: "easyscreenshotkit 0.1.2", video: { file: "demo.mp4", width: 1920, height: 1080, fps: 30, duration }, steps }));
+  const step = (n, start, note) => ({ n, action: "click", label: "Click", note, start, end: start + 1 });
+  demo("past.json", 15, [step(1, 2, "First words."), step(2, 14, "Held."), step(3, 16, "After the end.")]);
+  const r = run(["subtitles", "past.json", "--out", "past"], { cwd: work });
+  assert.equal(r.status, 0, r.stderr);
+  const c = JSON.parse(fs.readFileSync(path.join(work, "past", "captions.json"), "utf8"));
+  assert.ok(c.cues.every((cue) => cue.end <= 15 && cue.text !== "After the end."), JSON.stringify(c.cues));
+  assert.equal(c.cues.at(-1).end, 15);
+  assert.ok(c.notes.includes("3 words start after the video ends (15.00 s, as past.json gives its length) and were left out."), JSON.stringify(c.notes));
+  assert.ok(JSON.parse(fs.readFileSync(path.join(work, "past", "words.json"), "utf8")).words.every((w) => w.end <= 15));
+  // A 60 s demo with notes in its first seconds: no word belongs elsewhere, so nothing is asked.
+  demo("early.json", 60, [step(1, 2, "Only the start has notes.")]);
+  const early = run(["subtitles", "early.json", "--out", "early"], { cwd: work });
+  assert.equal(early.status, 0, early.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(work, "early", "captions.json"), "utf8")).notes.filter((note) => /belong|left out/.test(note)), []);
+  demo("all-past.json", 15, [step(1, 20, "Nothing fits.")]);
+  const none = run(["subtitles", "all-past.json", "--out", "all-past"], { cwd: work });
+  assert.equal(none.status, 1);
+  assert.match(none.stderr, /Every word starts after the video ends \(15\.00 s, as all-past\.json gives its length\)/);
+});
+
 test("a moment written as m:ss.s rounds to the tenth before it takes the minutes, so none reads 0:60.0", () => {
   const { clock } = require("../skills/easycaptionkit/scripts/lib/report");
   assert.deepEqual([0, 0.04, 9.96, 59.94, 59.96, 61.25, 119.97, 3599.99].map(clock), ["0:00.0", "0:00.0", "0:10.0", "0:59.9", "1:00.0", "1:01.3", "2:00.0", "60:00.0"]);
