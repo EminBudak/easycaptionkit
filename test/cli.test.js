@@ -319,7 +319,7 @@ test("a file that is not a video, a video with no picture and a still picture sa
   const late = write("late-words.json", { words: [{ word: "late", start: 50, end: 51 }] });
   const tooLate = run([video({ width: 320, height: 568, seconds: 2 }), "--words", late, "--out", path.join(dir, "cli-h"), "--libass"]);
   assert.equal(tooLate.status, 1);
-  assert.match(tooLate.stderr, /Every word starts after the video ends/);
+  assert.match(tooLate.stderr, /Every word starts after the video ends \(\d+\.\d\d s\)\. The words file belongs to another video, or its times are in another unit\n/);
   // A still picture given as the video, as a thumbnail or a poster frame, is said to be one, as musicfit says it, where
   // its length of a frame said the words belong to another video; for subtitles' --video too.
   const ffmpeg = require("./helpers").ffmpeg;
@@ -2057,7 +2057,13 @@ test("a subtitles run with no video leaves out a step that starts after the leng
   demo("all-past.json", 15, [step(1, 20, "Nothing fits.")]);
   const none = run(["subtitles", "all-past.json", "--out", "all-past"], { cwd: work });
   assert.equal(none.status, 1);
-  assert.match(none.stderr, /Every word starts after the video ends \(15\.00 s, as all-past\.json gives its length\)/);
+  assert.match(none.stderr, /Every word starts after the video ends \(15\.00 s, as all-past\.json gives its length\)\. The times in that file or the length it gives are wrong\n/);
+  assert.doesNotMatch(none.stderr, /another video|another unit/);
+  // A words.json made of steps keeps the demo's length, and is refused the same way.
+  fs.writeFileSync(path.join(work, "made.json"), JSON.stringify({ tool: "easycaptionkit 0.1.1", from: "easyscreenshotkit's steps.json", demo: { duration: 15 }, words: [{ text: "Late.", start: 20, end: 21 }] }));
+  const made = run(["subtitles", "made.json", "--out", "made"], { cwd: work });
+  assert.equal(made.status, 1);
+  assert.match(made.stderr, /Every word starts after the video ends \(15\.00 s, as made\.json gives its length\)\. The times in that file or the length it gives are wrong\n/);
 });
 
 test("a moment written as m:ss.s rounds to the tenth before it takes the minutes, so none reads 0:60.0", () => {

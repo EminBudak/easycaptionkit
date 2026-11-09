@@ -833,7 +833,7 @@ function fitWords(read, duration, givenBy = "") {
   // which says nothing of whether its own words belong to its video.
   const end = `${duration.toFixed(2)} s${givenBy ? `, as ${givenBy} gives its length` : ""}`;
   if (dropped) notes.push(`${dropped} ${dropped === 1 ? "word starts" : "words start"} after the video ends (${end}) and ${dropped === 1 ? "was" : "were"} left out.${givenBy ? "" : " Check that the words belong to this video."}`);
-  if (!words.length) throw new Error(`Every word starts after the video ends (${end}). The words file belongs to another video, or its times are in another unit`);
+  if (!words.length) throw new Error(`Every word starts after the video ends (${end}). ${givenBy ? "The times in that file or the length it gives are wrong" : "The words file belongs to another video, or its times are in another unit"}`);
   const last = words[words.length - 1].end;
   if (!givenBy && last < duration * 0.5 && duration > 20) notes.push(`The words end at ${last.toFixed(1)} s, before half of the video (${duration.toFixed(1)} s). Check that they belong to this video.`);
   return { words, notes };
