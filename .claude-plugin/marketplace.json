@@ -8,7 +8,7 @@
     {
       "name": "easycaptionkit",
       "description": "Burns captions into a video from words with times (a speech-to-text JSON from OpenAI, whisper.cpp, WhisperX, ElevenLabs, Deepgram and others, an SRT or VTT file, or a demo's steps), word by word or line by line, in the site's own fonts and colors, kept clear of the buttons of TikTok, Reels, Shorts, YouTube, X and LinkedIn, and writes captions.srt, captions.vtt and captions.ass to go with it.",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./",
       "skills": ["./skills/easycaptionkit"],
       "author": {
