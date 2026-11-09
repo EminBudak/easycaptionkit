@@ -352,10 +352,11 @@ function lighterLines(look, drawn) {
 // The fonts that drew every letter of the captions where the font asked
 // for, by name or from fonts.css, drew none of them, as a Latin font draws
 // no Japanese: the fonts Chrome drew them with, or with libass the fonts
-// captions.ass sets them in. Their names, or [] when the font drew any
-// letter, no font was asked for, or nothing says.
+// captions.ass sets them in. Letters that show as boxes, which no font
+// drew, do not count. Their names, or [] when the font drew any letter, no
+// font was asked for, or nothing says.
 function drewNone(f) {
-  if (f.drawnWith === "libass") return f.look.family && setsNone(f) ? f.assFallbacks.map((x) => x.family) : [];
+  if (f.drawnWith === "libass") return f.look.family && !setsAny(f) && (f.assFallbacks || []).length ? f.assFallbacks.map((x) => x.family) : [];
   const drawn = (f.fontsDrawn || []).filter((x) => x.glyphs > 0);
   if (!f.look.family || !drawn.length || drawn.some((x) => drewWith(x, f.look))) return [];
   return drawn.map((x) => x.family);
@@ -395,7 +396,8 @@ function licenseSection(f) {
   // ones that drew them are, whatever its license.
   const instead = drewNone(f);
   if (instead.length) {
-    const drew = libass ? "captions.ass sets them all in" : boxedIn(f) ? "Chrome drew all but the boxes with" : "Chrome drew them all with";
+    const which = boxedIn(f) ? "all but the boxes" : "them all";
+    const drew = libass ? `captions.ass sets ${which} in` : `Chrome drew ${which} with`;
     // A font asked for by name that this machine has, or one from fonts.css, lacks the letters.
     const lacks = look.from === "fonts.css" || (libass ? f.libassFont && sameName(f.libassFont.family, look.family) : machineHas(f));
     const lead = read ? `${read}, but no letter of it is in the video` : `No letter of ${look.family} is in the video`;

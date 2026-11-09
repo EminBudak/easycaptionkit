@@ -1647,10 +1647,15 @@ test("CAPTIONS.md and the summary say which letters the video shows as boxes, th
   const brandLibass = facts({ look: brand, drawnWith: "libass", fontFirst: "", libassFont: null, assFallbacks: [{ family: "Noto Sans Mongolian", letters: 1 }], assLetters: { total: 11, own: 0 } });
   assert.match(license(brandLibass), /captions\.ass sets them all in Noto Sans Mongolian/);
   assert.match(font(brandLibass), /which has none of these letters: captions\.ass sets them in Noto Sans Mongolian$/);
+  // Boxes among them: no letter of the font is in the video all the same, and the fonts named set the others.
   const brandBoxes = { ...brandLibass, boxes: ja.slice(0, 10) };
   assert.doesNotMatch(license(brandBoxes), /sets them all in/);
-  assert.match(license(brandBoxes), /carry the font's letters into every copy/);
+  assert.match(license(brandBoxes), /^easyfontkit read Brand Sans as under a commercial license \(https:\/\/example\.com\/eula\), but no letter of it is in the video, since it has none of these letters: captions\.ass sets all but the boxes in Noto Sans Mongolian, which came with this machine\./);
+  assert.doesNotMatch(license(brandBoxes), /carry the font's letters into every copy/);
   assert.match(font(brandBoxes), /; captions\.ass sets 1 letter it lacks in Noto Sans Mongolian$/);
+  // Without license facts, the same; where the font set any letter, it is in the video and the warning stays.
+  assert.match(license({ ...brandBoxes, look: { ...brand, license: null } }), /^No letter of Brand Sans is in the video, since it has none of these letters: captions\.ass sets all but the boxes in Noto Sans Mongolian/);
+  assert.match(license({ ...brandBoxes, assLetters: { total: 11, own: 1 } }), /carry the font's letters into every copy/);
   // With Chrome, the fonts that drew the rest are not said to have drawn the boxes too.
   const brandChrome = facts({ look: brand, fontFirst: "Liberation Sans", fontsDrawn: [{ family: "Noto Sans", glyphs: 1, custom: false }] });
   assert.match(license(brandChrome), /no letter of it is in the video, since it has none of these letters: Chrome drew them all with Noto Sans/);
