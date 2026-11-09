@@ -1,6 +1,6 @@
 {
   "name": "easycaptionkit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Burn captions into a video in the product's own fonts and colors, word by word or line by line, kept clear of each app's buttons, with SRT, VTT and ASS files.",
   "author": {
     "name": "Emin Budak",
