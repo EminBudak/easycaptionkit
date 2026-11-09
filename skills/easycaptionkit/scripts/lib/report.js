@@ -262,6 +262,14 @@ function fontLines(f) {
   const boxed = boxedIn(f) ? [`  ${boxesText(f.boxes, f.drawnWith)}`] : [];
   const other = boxed.length ? "other " : "";
   const ofAll = boxed.length ? `of the other ${total}` : `of ${total}`;
+  // The letters the fonts drew as a sentence names them, where one is left
+  // beside the boxes, or is all there is: "the other letter", which "it"
+  // stands for, and never "the other 1 letters".
+  const one = total === 1;
+  const it = one ? "it" : "them";
+  const letters = `the ${other}${one ? "letter" : "letters"}`;
+  const counted = one ? letters : `the ${other}${total} letters`;
+  const lacksThem = (fonts) => `It ${one ? "does not have" : "has none of"} ${counted}, so Chrome drew ${it} with ${fill(fonts)}.`;
   if (!look.family) {
     if (libass) {
       lines.push(`- Font: Arial ${look.weight}, as captions.ass asks for it by name. ${m && sameName(m.family, "Arial") ? "This machine has it." : givenFor(m)}`, ...boxed, ...filled);
@@ -272,7 +280,7 @@ function fontLines(f) {
     const first = f.fontFirst || "";
     if (!first) {
       lines.push(`- Font: a common sans ${look.weight}, the first of the common sans fonts easycaptionkit asks for that this machine has.`, ...boxed);
-      if (drawn.length) lines.push(`  Chrome drew the ${other}${total} letters with ${fill(drawn)}.`);
+      if (drawn.length) lines.push(`  Chrome drew ${counted} with ${fill(drawn)}.`);
       return lines;
     }
     lines.push(`- Font: ${first} ${look.weight}, the first of the common sans fonts easycaptionkit asks for that this machine has.`, ...boxed);
@@ -280,7 +288,7 @@ function fontLines(f) {
     const others = drawn.filter((x) => x.family !== first);
     if (others.length) {
       const rest = total - (own ? own.glyphs : 0);
-      lines.push(own ? `  Chrome drew ${own.glyphs} ${ofAll} letters with it, and the ${rest} it lacks with ${fill(others)}.` : `  It has none of the ${other}${total} letters, so Chrome drew them with ${fill(others)}.`);
+      lines.push(own ? `  Chrome drew ${own.glyphs} ${ofAll} letters with it, and the ${rest} it lacks with ${fill(others)}.` : `  ${lacksThem(others)}`);
     }
     lines.push(...lighterLines(look, others));
     return lines;
@@ -298,13 +306,13 @@ function fontLines(f) {
     // drew every letter as a box, and its first font is another.
     const absent = !machineHas(f) && (drawn.length ? !drawn.some((x) => drewWith(x, look)) : boxed.length > 0);
     if (absent) {
-      if (boxed.length) lines.push(`- Font: ${look.family} ${look.weight} was asked for by name, and this machine does not have it. Give easyfontkit's folder with --fonts to burn the real font.`, ...boxed, ...(drawn.length ? [`  Chrome drew the other letters with ${fill(drawn)}.`] : []));
-      else lines.push(`- Font: ${look.family} ${look.weight} was asked for by name, and this machine does not have it, so Chrome drew the letters with ${fill(drawn)}. Give easyfontkit's folder with --fonts to burn the real font.`);
+      if (boxed.length) lines.push(`- Font: ${look.family} ${look.weight} was asked for by name, and this machine does not have it. Give easyfontkit's folder with --fonts to burn the real font.`, ...boxed, ...(drawn.length ? [`  Chrome drew ${letters} with ${fill(drawn)}.`] : []));
+      else lines.push(`- Font: ${look.family} ${look.weight} was asked for by name, and this machine does not have it, so Chrome drew ${letters} with ${fill(drawn)}. Give easyfontkit's folder with --fonts to burn the real font.`);
       return lines;
     }
     if (drawn.length && !drawn.some((x) => drewWith(x, look))) {
-      if (boxed.length) lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine.`, ...boxed, `  It has none of the other ${total} letters, so Chrome drew them with ${fill(drawn)}.`, ...lighterLines(look, drawn));
-      else lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine. It has none of the ${total} letters, so Chrome drew them with ${fill(drawn)}.`, ...lighterLines(look, drawn));
+      if (boxed.length) lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine.`, ...boxed, `  ${lacksThem(drawn)}`, ...lighterLines(look, drawn));
+      else lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine. ${lacksThem(drawn)}`, ...lighterLines(look, drawn));
       return lines;
     }
     lines.push(`- Font: ${look.family} ${look.weight}, as installed on this machine.`);
@@ -321,8 +329,8 @@ function fontLines(f) {
   // otherwise.
   const own = drawn.filter((x) => drewWith(x, look));
   const others = drawn.filter((x) => !drewWith(x, look));
-  if (!own.length) lines.push(`  Chrome drew ${boxed.length ? "none of the other letters" : "no letter"} with the file of ${look.family}: ${drawn[0].family} drew them.`);
-  else if (!others.length) lines.push(boxed.length ? "  Chrome drew all the other letters with it." : "  Chrome drew every letter with it.");
+  if (!own.length) lines.push(`  Chrome ${!boxed.length ? "drew no letter" : one ? "did not draw the other letter" : "drew none of the other letters"} with the file of ${look.family}: ${drawn[0].family} drew ${it}.`);
+  else if (!others.length) lines.push(boxed.length ? `  Chrome drew ${one ? "the other letter" : "all the other letters"} with it.` : "  Chrome drew every letter with it.");
   else {
     const mine = own.reduce((a, b) => a + b.glyphs, 0);
     lines.push(`  Chrome drew ${mine} ${ofAll} letters with it, and the ${total - mine} it lacks with ${fill(others)}.`);

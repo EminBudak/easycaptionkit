@@ -1635,6 +1635,32 @@ test("CAPTIONS.md and the summary say which letters the video shows as boxes, th
   const has = facts({ look: named, fontsDrawn: [{ family: "Noto Sans CJK JP", postScriptName: "NotoSansCJKjp-Bold", glyphs: 27, custom: false }], boxes: box(2) });
   assert.equal(look(has), "- Font: Liberation Sans 700, as installed on this machine.\n  Chrome found no font on this machine for 1 letter of caption 2 (\u{10fffd}), so it drew a box for it.\n  It has none of the other 27 letters, so Chrome drew them with Noto Sans CJK JP.");
   assert.equal(font(has), "  Font      Liberation Sans 700 (it has none of these letters: Noto Sans CJK JP drew all but the boxes)");
+  // One letter drawn, beside the boxes or in all: as Noto Color Emoji draws the emoji of 今日は🚀 on a machine with no Japanese font.
+  const emoji = [{ family: "Noto Color Emoji", postScriptName: "NotoColorEmoji", glyphs: 1, custom: false }];
+  const three = ja.slice(0, 3);
+  const lastLine = (f) => look(f).split("\n").at(-1);
+  assert.equal(lastLine(facts({ fontsDrawn: emoji, boxes: three })), "  It does not have the other letter, so Chrome drew it with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ fontsDrawn: emoji })), "  It does not have the letter, so Chrome drew it with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ fontFirst: "", fontsDrawn: emoji, boxes: three })), "  Chrome drew the other letter with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ fontFirst: "", fontsDrawn: emoji })), "  Chrome drew the letter with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ look: named, fontsDrawn: emoji, boxes: three })), "  It does not have the other letter, so Chrome drew it with Noto Color Emoji.");
+  assert.equal(look(facts({ look: named, fontsDrawn: emoji })), "- Font: Liberation Sans 700, as installed on this machine. It does not have the letter, so Chrome drew it with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ look: geist, fontsDrawn: emoji, boxes: three })), "  Chrome drew the other letter with Noto Color Emoji.");
+  assert.equal(look(facts({ look: geist, fontsDrawn: emoji })), "- Font: Geist 700 was asked for by name, and this machine does not have it, so Chrome drew the letter with Noto Color Emoji. Give easyfontkit's folder with --fonts to burn the real font.");
+  assert.equal(lastLine(facts({ look: kit, fontsDrawn: emoji, boxes: three })), "  Chrome did not draw the other letter with the file of Inter: Noto Color Emoji drew it.");
+  assert.equal(lastLine(facts({ look: kit, fontsDrawn: emoji })), "  Chrome drew no letter with the file of Inter: Noto Color Emoji drew it.");
+  assert.equal(lastLine(facts({ look: kit, fontFirst: "Inter", fontsDrawn: [{ family: "Inter", glyphs: 1, custom: true }], boxes: three })), "  Chrome drew the other letter with it.");
+  assert.equal(lastLine(facts({ look: kit, fontFirst: "Inter", fontsDrawn: [{ family: "Inter", glyphs: 1, custom: true }] })), "  Chrome drew every letter with it.");
+  // Two letters are still counted, and said to be several.
+  const twoEmoji = [{ ...emoji[0], glyphs: 2 }];
+  assert.equal(lastLine(facts({ fontsDrawn: twoEmoji, boxes: three })), "  It has none of the other 2 letters, so Chrome drew them with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ fontFirst: "", fontsDrawn: twoEmoji, boxes: three })), "  Chrome drew the other 2 letters with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ fontFirst: "", fontsDrawn: twoEmoji })), "  Chrome drew the 2 letters with Noto Color Emoji.");
+  assert.equal(look(facts({ look: named, fontsDrawn: twoEmoji })), "- Font: Liberation Sans 700, as installed on this machine. It has none of the 2 letters, so Chrome drew them with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ look: geist, fontsDrawn: twoEmoji, boxes: three })), "  Chrome drew the other letters with Noto Color Emoji.");
+  assert.equal(lastLine(facts({ look: kit, fontsDrawn: twoEmoji, boxes: three })), "  Chrome drew none of the other letters with the file of Inter: Noto Color Emoji drew them.");
+  assert.equal(lastLine(facts({ look: kit, fontsDrawn: twoEmoji })), "  Chrome drew no letter with the file of Inter: Noto Color Emoji drew them.");
+  assert.equal(lastLine(facts({ look: kit, fontFirst: "Inter", fontsDrawn: [{ family: "Inter", glyphs: 2, custom: true }], boxes: three })), "  Chrome drew all the other letters with it.");
   // libass, on a machine with no Japanese font: the full stop is set in
   // Noto Sans Mongolian, which has it, and the rest show as boxes, so
   // that font is not said to set them all.
