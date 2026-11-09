@@ -1697,6 +1697,17 @@ test("CAPTIONS.md and the summary say which letters the video shows as boxes, th
   assert.doesNotMatch(captionsMarkdown(facts({ fontsDrawn: [{ family: "Liberation Sans", glyphs: 5, custom: false }] })), /box|no font on this machine/i);
 });
 
+test("the README says CAPTIONS.md gives what to do about the boxes of a libass run, which for an emoji is no font to install", () => {
+  const { missingNotes } = require("../skills/easycaptionkit/scripts/lib/caption");
+  const readme = fs.readFileSync(path.resolve(__dirname, "../README.md"), "utf8");
+  assert.ok(readme.includes("CAPTIONS.md says which on Linux, where fontconfig can tell, with what to do, and elsewhere names the emoji"), "the sentence on the boxes of a libass run");
+  assert.ok(!readme.includes("with what to install"), "no sentence promises a font to install for every box");
+  const [emoji, letter] = missingNotes([{ letter: "🚀", cue: 1 }, { letter: "今", cue: 2 }]);
+  assert.match(emoji, /Leave out --libass to have Chrome draw it\.$/);
+  assert.doesNotMatch(emoji, /Install/);
+  assert.match(letter, /Install a font that has it, such as Noto Sans CJK/);
+});
+
 test("CAPTIONS.md and the summary say what drew the letters when the font asked for is not there or is a variable font libass draws, where the captions reach, and commands that run from where the run was made", () => {
   const { captionsMarkdown, subtitlesMarkdown } = require("../skills/easycaptionkit/scripts/lib/report");
   const { summary } = require("../skills/easycaptionkit/scripts/easycaptionkit");
