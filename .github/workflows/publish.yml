@@ -32,8 +32,10 @@ jobs:
       - name: Let Chrome start
         run: if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg && ffmpeg -version | head -1
+      # A Japanese font as well: the test of a list's first font draws Japanese captions,
+      # and the runner has no font for them.
+      - name: Install ffmpeg and a Japanese font
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk && ffmpeg -version | head -1
 
       - name: Test
         run: npm test
