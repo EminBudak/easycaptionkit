@@ -1409,7 +1409,7 @@ test("one word says so in the singular, and a file name with a line break stays 
   assert.match(r.stderr, /Cut it into 1 caption\n/);
   assert.match(r.stdout, /^Wrote 1 caption from x 00:00:00\.000 --> 00:00:09\.000 NOT A CAPTION\.json to /);
   const vtt = fs.readFileSync(path.join(dir, "one-word", "captions.vtt"), "utf8");
-  assert.equal(vtt.split("\n\n")[1], "NOTE easycaptionkit 0.1.0, from x 00:00:00.000 -> 00:00:09.000 NOT A CAPTION.json");
+  assert.equal(vtt.split("\n\n")[1], `NOTE easycaptionkit ${require("../package.json").version}, from x 00:00:00.000 -> 00:00:09.000 NOT A CAPTION.json`);
   assert.deepEqual(require("../skills/easycaptionkit/scripts/lib/words").readWords(path.join(dir, "one-word", "captions.vtt")).words.map((w) => w.text), ["Alone."]);
   const md = fs.readFileSync(path.join(dir, "one-word", "CAPTIONS.md"), "utf8");
   assert.equal(md.split("\n")[0], "# Subtitles from x 00:00:00.000 --> 00:00:09.000 NOT A CAPTION.json");
