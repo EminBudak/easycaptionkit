@@ -1,0 +1,44 @@
+{
+  "name": "easycaptionkit",
+  "version": "0.1.0",
+  "description": "Burn captions into a video in the product's own fonts and colors, word by word or line by line, kept clear of each app's buttons, with the SRT, VTT and ASS files to go with it.",
+  "license": "MIT",
+  "author": "Emin Budak",
+  "homepage": "https://github.com/EminBudak/easycaptionkit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EminBudak/easycaptionkit.git"
+  },
+  "bugs": "https://github.com/EminBudak/easycaptionkit/issues",
+  "bin": {
+    "easycaptionkit": "skills/easycaptionkit/scripts/easycaptionkit.js"
+  },
+  "main": "skills/easycaptionkit/scripts/lib/caption.js",
+  "files": [
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "keywords": [
+    "captions",
+    "subtitles",
+    "srt",
+    "webvtt",
+    "video",
+    "tiktok",
+    "reels",
+    "shorts",
+    "safe-zone",
+    "ffmpeg",
+    "agent-skills",
+    "claude-code",
+    "codex",
+    "cursor"
+  ]
+}

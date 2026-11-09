@@ -1,0 +1,23 @@
+{
+  "name": "easycaptionkit",
+  "description": "easycaptionkit: burn captions into a video in the product's own fonts and colors, clear of each app's buttons, with SRT, VTT and ASS files.",
+  "owner": {
+    "name": "Emin Budak"
+  },
+  "plugins": [
+    {
+      "name": "easycaptionkit",
+      "description": "Burns captions into a video from words with times (a speech-to-text JSON from OpenAI, whisper.cpp, WhisperX, ElevenLabs, Deepgram and others, an SRT or VTT file, or a demo's steps), word by word or line by line, in the site's own fonts and colors, kept clear of the buttons of TikTok, Reels, Shorts, YouTube, X and LinkedIn, and writes captions.srt, captions.vtt and captions.ass to go with it.",
+      "version": "0.1.0",
+      "source": "./",
+      "skills": ["./skills/easycaptionkit"],
+      "author": {
+        "name": "Emin Budak"
+      },
+      "homepage": "https://github.com/EminBudak/easycaptionkit",
+      "repository": "https://github.com/EminBudak/easycaptionkit",
+      "license": "MIT",
+      "keywords": ["skills", "captions", "subtitles", "video", "srt", "safe-zone"]
+    }
+  ]
+}

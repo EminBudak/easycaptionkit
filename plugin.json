@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "easycaptionkit",
+  "version": "0.1.0",
+  "description": "Burn captions into a video in the product's own fonts and colors, word by word or line by line, kept clear of each app's buttons, with SRT, VTT and ASS files.",
+  "author": {
+    "name": "Emin Budak",
+    "url": "https://eminbudak.com"
+  },
+  "homepage": "https://github.com/EminBudak/easycaptionkit",
+  "repository": "https://github.com/EminBudak/easycaptionkit",
+  "license": "MIT",
+  "keywords": ["captions", "subtitles", "video", "srt", "safe-zone"]
+}
