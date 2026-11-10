@@ -92,7 +92,9 @@ function tools() {
 // ffmpeg 7 and newer with the others, and ffmpeg 8 says last that its
 // encoder never opened and that it wrote nothing, after a filter that
 // could not start, or that filtering failed, after the scaler said which
-// frame it could not convert.
+// frame it could not convert. ffmpeg 6.1 says it could not start a simple
+// filtergraph, the one -vf gives, after the line that names the option
+// its filter refused.
 const CLOSING = [
   /^Could not open encoder before EOF/,
   /^Error while filtering\b/,
@@ -104,6 +106,7 @@ const CLOSING = [
   /^Error initializing complex filters\.?$/,
   /^Error opening filters!?$/,
   /^Exiting normally/,
+  /^Error initializing a simple filtergraph$/,
   /^(?:Invalid argument|Operation not permitted|Cannot allocate memory|Invalid data found when processing input|Unknown error occurred)$/,
   /^Error opening (?:input|output) files?\b/,
   /^Error selecting an encoder$/,

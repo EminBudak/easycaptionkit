@@ -1566,6 +1566,16 @@ test("Chrome's captions over an HD video that names no matrix, as a browser's re
   }
 });
 
+test("why ffmpeg 6.1 failed: the line that names the option a filter refused, not Error initializing a simple filtergraph, which it prints after that line", () => {
+  const { whyFailed } = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
+  // What ffmpeg 6.1, Ubuntu 24.04's and ubuntu-latest's, printed when the
+  // loudness meter in musicfit's -af refused a framelog value, copied from
+  // musicfit's tests.
+  const said = fs.readFileSync(path.join(h.FIXTURES, "stderr", "framelog-6.1.txt"), "utf8");
+  assert.match(said, /\] Error initializing a simple filtergraph\n/);
+  assert.equal(whyFailed({ code: 234, signal: null, stderr: said }), "Error applying option 'framelog' to filter 'ebur128': Invalid argument");
+});
+
 test("why ffmpeg failed: the line that names the filter or option, not the closing lines after it, and the signal that stopped it, as SIGKILL when memory runs out, or the SIGTERM it took itself and ended with 255 for", { skip: (!h.hasFfmpeg && "needs ffmpeg") || (process.platform === "win32" && "needs a shell script for ffmpeg") }, function () {
   const { whyFailed } = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
   // ffmpeg 8 and 4.4 on a color tag setparams does not take.
