@@ -928,7 +928,7 @@ const rateBase = (rate) => {
 // The captions show on the video's own frames. Where it has too few for
 // them, as fillFor says, `fill` gives it frames at a steady rate first.
 async function burn({ bins, caps, video: v, output, overlay = null, ass = null, assMatrix = "", assFull = false, fontsDir = "", fill = null, onProgress = null, quiet = 180_000 }) {
-  if (!caps.encoder) throw new Error("This ffmpeg has no H.264 encoder (libx264, VideoToolbox or OpenH264), so it cannot write the captioned MP4");
+  if (!caps.encoder) throw new Error("This ffmpeg has no H.264 encoder (libx264, VideoToolbox, OpenH264 or Media Foundation), so it cannot write the captioned MP4");
   const color = colorOf(v, caps.colorNames);
   // An HDR video stays HDR where x264 writes 10 bits.
   const deep = v.hdr && caps.tenBit;

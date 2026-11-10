@@ -953,7 +953,7 @@ async function captionVideo(videoFile, options) {
   if (temp) throw new Error(`${temp}. Set it to a folder, or unset it`);
   const [video, caps] = await Promise.all([ffmpeg.readVideo(videoFile, bins), ffmpeg.capabilities(bins)]);
   notStill(video, videoFile);
-  if (!caps.encoder) throw new Error("This ffmpeg has no H.264 encoder (libx264, VideoToolbox or OpenH264), so it cannot write the captioned MP4");
+  if (!caps.encoder) throw new Error("This ffmpeg has no H.264 encoder (libx264, VideoToolbox, OpenH264 or Media Foundation), so it cannot write the captioned MP4");
   if (useLibass && !caps.libass) throw new Error("This ffmpeg has no libass (its ass filter), so --libass cannot draw the captions. Leave out --libass to draw them with Chrome, or install an ffmpeg built with libass");
   if (!useLibass && !caps.overlay) throw new Error("This ffmpeg has no overlay filter, so it cannot lay the captions over the video");
   const read = await loadWords(options.words);
