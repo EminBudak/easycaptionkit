@@ -562,12 +562,14 @@ test("a pipe that goes on past what words take is stopped there, words can come 
     let stderr = "";
     child.stderr.on("data", (d) => (stderr += d));
     const ended = new Promise((resolve) => child.on("close", (code, sig) => resolve({ code, signal: sig })));
-    // Once the kit listens for SIGINT and SIGTERM, as Linux's /proc shows, and a moment more for it to
-    // reach the pipe; a busy machine starts Node slowly. Elsewhere, two seconds.
+    // Once the kit listens for its signals, as Linux's /proc shows, and a moment more for it to
+    // reach the pipe; a busy machine starts Node slowly. Node catches SIGINT and SIGTERM itself
+    // from its start, so the sign is SIGHUP, which the kit listens for after those two.
+    // Elsewhere, two seconds.
     const listening = () => {
       try {
         const mask = BigInt(`0x${/^SigCgt:\s*([0-9a-f]+)$/m.exec(fs.readFileSync(`/proc/${child.pid}/status`, "utf8"))[1]}`);
-        return Boolean(mask & (1n << 1n)) && Boolean(mask & (1n << 14n));
+        return Boolean(mask & 1n);
       } catch {
         return null;
       }
