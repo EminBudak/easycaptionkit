@@ -1084,9 +1084,11 @@ async function captionVideo(videoFile, options) {
         // A Chrome that cannot start here (no usable sandbox, as in a
         // container) stops the run before the encode; libass needs none. A
         // Chrome the system stopped as memory ran out can draw with fewer
-        // jobs at once, or a smaller video.
-        if (err.chrome && err.signal === "SIGKILL") err.message += ". Run again with fewer jobs at once or with a smaller video, or pass --libass to have ffmpeg draw the captions without Chrome";
-        else if (err.chrome && err.start) err.message += ". Pass --libass to have ffmpeg draw the captions without Chrome";
+        // jobs at once, or a smaller video. A message that ends with a full
+        // stop, as one of what to do does, keeps only that one.
+        const said = err.message.replace(/\.$/, "");
+        if (err.chrome && err.signal === "SIGKILL") err.message = `${said}. Run again with fewer jobs at once or with a smaller video, or pass --libass to have ffmpeg draw the captions without Chrome`;
+        else if (err.chrome && err.start) err.message = `${said}. Pass --libass to have ffmpeg draw the captions without Chrome`;
         throw err;
       }
       fs.writeFileSync(path.join(run.work, "captions.ass"), assFile(drawn.scales));

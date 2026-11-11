@@ -561,15 +561,23 @@ test("a program a run checked that the system cannot start during the work says 
   const file = real("ffmpeg");
   await assert.rejects(ffmpeg.run(file, ["-version"], { cwd: gone }), { message: `${path.basename(file)} could not be started in ${gone}, a folder that is not there any more or may not be entered` });
   await assert.rejects(ffmpeg.run(path.join(dir, "no-such-ffmpeg"), ["-version"]), { message: `easycaptionkit could not start no-such-ffmpeg, ${path.join(dir, "no-such-ffmpeg")}, again: no such file or directory. Check that it is still there and may be run, and run easycaptionkit again.` });
+  const root = path.join(dir, "started-again");
+  const refused = refuser(root);
+  const clip = video({ width: 320, height: 240, seconds: 1, sound: "none" });
+  const words = write("started-again-words.json", { words: evenWords("one two three", { start: 0.1, each: 0.2, gap: 0.05 }) });
+  const standIn = (name, body) => {
+    const file = path.join(root, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, body, { mode: 0o755 });
+    return file;
+  };
+  // A Chrome that gives its version and may not be run after, so it cannot be started to draw: its message ends with
+  // one full stop before the advice to pass --libass.
+  const chrome = standIn("lost-chrome/chrome", '#!/bin/sh\nif [ "$1" = --version ]; then echo "Chromium 140.0.0.0, a stand-in"; chmod 644 "$0"; exit 0; fi\nexit 1\n');
+  refused({ CHROME_PATH: chrome, FFMPEG_PATH: file, FFPROBE_PATH: real("ffprobe") }, [clip, "--words", words], `easycaptionkit could not start Chrome, ${chrome}, again: permission denied. Check that it is still there and may be run, and run easycaptionkit again. Pass --libass to have ffmpeg draw the captions without Chrome`);
   // An ffmpeg that answers when the run begins and may not be run once libass has been asked how it draws colors, so
   // the encode cannot start it.
   if (!/ ass /.test(spawnSync(file, ["-hide_banner", "-filters"], { encoding: "utf8" }).stdout)) return;
-  const root = path.join(dir, "started-again");
-  const refused = refuser(root);
-  const lost = path.join(root, "lost", "ffmpeg");
-  fs.mkdirSync(path.dirname(lost), { recursive: true });
-  fs.writeFileSync(lost, `#!/bin/sh\ncase " $* " in *" ass=filename=matrix.ass "*) ${JSON.stringify(file)} "$@"; s=$?; chmod 644 "$0"; exit $s;; esac\nexec ${JSON.stringify(file)} "$@"\n`, { mode: 0o755 });
-  const clip = video({ width: 320, height: 240, seconds: 1, sound: "none" });
-  const words = write("started-again-words.json", { words: evenWords("one two three", { start: 0.1, each: 0.2, gap: 0.05 }) });
+  const lost = standIn("lost/ffmpeg", `#!/bin/sh\ncase " $* " in *" ass=filename=matrix.ass "*) ${JSON.stringify(file)} "$@"; s=$?; chmod 644 "$0"; exit $s;; esac\nexec ${JSON.stringify(file)} "$@"\n`);
   refused({ FFMPEG_PATH: lost, FFPROBE_PATH: real("ffprobe") }, [clip, "--words", words, "--libass"], `easycaptionkit could not start ffmpeg, ${lost}, again: permission denied. Check that it is still there and may be run, and run easycaptionkit again.`);
 });
