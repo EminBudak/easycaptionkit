@@ -52,15 +52,15 @@ const FFPROBE = (ffmpeg) => ({
 });
 
 // ffmpeg and ffprobe, each found and asked its version before any work,
-// as { ffmpeg, ffprobe, version }: their files and what ffmpeg said, which
-// capabilities() reads. ffprobe is looked for next to the ffmpeg that
-// answered.
+// as { ffmpeg, ffprobe, version, places }: their files, what ffmpeg said,
+// which capabilities() reads, and where each was found, for the words of
+// a later failure. ffprobe is looked for next to the ffmpeg that answered.
 // A program that cannot be started or does not answer as itself stops the
 // run there, as programs.find() says, ffmpeg's first.
 async function ready(limit = programs.LIMIT) {
   const ffmpeg = await programs.find(FFMPEG, limit);
   const ffprobe = await programs.find(FFPROBE(ffmpeg.file), limit);
-  return { ffmpeg: ffmpeg.file, ffprobe: ffprobe.file, version: ffmpeg.stdout };
+  return { ffmpeg: ffmpeg.file, ffprobe: ffprobe.file, version: ffmpeg.stdout, places: { ffmpeg: ffmpeg.place, ffprobe: ffprobe.place } };
 }
 
 // ffprobe alone, for a run that reads a video and starts no ffmpeg: found
@@ -68,7 +68,7 @@ async function ready(limit = programs.LIMIT) {
 // is not run, so nothing at ffmpeg's path stops it.
 async function readyProbe(limit = programs.LIMIT) {
   const ffprobe = await programs.find(FFPROBE(programs.locate(FFMPEG)), limit);
-  return { ffprobe: ffprobe.file };
+  return { ffprobe: ffprobe.file, places: { ffprobe: ffprobe.place } };
 }
 
 // What ffmpeg prints once it has given up, after the lines that say why:
@@ -567,16 +567,20 @@ const round3 = (value) => Math.round(value * 1000) / 1000;
 // ─── what this ffmpeg can do ──────────────────────────────────────────────
 
 // What this ffmpeg can do: its version number, from what it said when
-// ready() asked it, and its filters and encoders.
+// ready() asked it, and its filters and encoders, each asked of it and
+// read only once it ended well (see programs.probe()), so an ffmpeg that
+// fails or is stopped when asked is said to, not taken for one with no
+// H.264 encoder, no overlay filter or no libass.
 async function capabilities(bins, version) {
-  const [filters, encoders] = await Promise.all([run(bins.ffmpeg, ["-hide_banner", "-filters"], { quiet: 20_000 }), run(bins.ffmpeg, ["-hide_banner", "-encoders"], { quiet: 20_000 })]);
+  const asked = (args, what) => programs.probe(FFMPEG, bins.places.ffmpeg, ["-hide_banner", ...args], what);
+  const [filters, encoders] = await Promise.all([asked(["-filters"], "its filters"), asked(["-encoders"], "its encoders")]);
   // 4.4 is the oldest ffmpeg the kit is tried on: Ubuntu 22.04's. A build
   // from git says no number and is newer.
   const v = /ffmpeg version n?(\d+)\.(\d+)/.exec(version);
   const atLeast = (major, minor) => !v || Number(v[1]) > major || (Number(v[1]) === major && Number(v[2]) >= minor);
   if (!atLeast(4, 4)) throw new Error(`ffmpeg 4.4 or newer is needed, and this one is ${v[1]}.${v[2]}. Install a newer one (brew install ffmpeg, or a static build) or set FFMPEG_PATH to it.`);
-  const hasFilter = (name) => new RegExp(`^\\s*\\S+\\s+${name}\\s`, "m").test(filters.stdout);
-  const hasEncoder = (name) => new RegExp(`^\\s*V\\S*\\s+${name}\\s`, "m").test(encoders.stdout);
+  const hasFilter = (name) => new RegExp(`^\\s*\\S+\\s+${name}\\s`, "m").test(filters);
+  const hasEncoder = (name) => new RegExp(`^\\s*V\\S*\\s+${name}\\s`, "m").test(encoders);
   let encoder = null;
   // No B-frames: with them the file starts behind an edit list, and a tool
   // that reads frames without it is two frames off the captions' times.
@@ -585,11 +589,7 @@ async function capabilities(bins, version) {
   else if (hasEncoder("libopenh264")) encoder = { name: "libopenh264", args: ["-c:v", "libopenh264", "-b:v", "12M"] };
   else if (hasEncoder("h264_mf")) encoder = { name: "h264_mf", args: ["-c:v", "h264_mf", "-b:v", "12M"] };
   // Whether x264 here writes 10 bits, which an HDR video needs to stay HDR.
-  let tenBit = false;
-  if (encoder && encoder.name === "libx264") {
-    const help = await run(bins.ffmpeg, ["-hide_banner", "-h", "encoder=libx264"], { quiet: 20_000 });
-    tenBit = /yuv420p10le/.test(help.stdout);
-  }
+  const tenBit = Boolean(encoder && encoder.name === "libx264" && /yuv420p10le/.test(await asked(["-h", "encoder=libx264"], "about its libx264")));
   const setparams = hasFilter("setparams");
   return {
     // -fps_mode came in 5.1, in the place of -vsync.
@@ -598,10 +598,10 @@ async function capabilities(bins, version) {
     libass: hasFilter("ass"),
     setparams,
     // The names setparams takes for each of its options.
-    colorNames: setparams ? optionNames((await run(bins.ffmpeg, ["-hide_banner", "-h", "filter=setparams"], { quiet: 20_000 })).stdout) : {},
+    colorNames: setparams ? optionNames(await asked(["-h", "filter=setparams"], "about its setparams filter")) : {},
     encoder,
     tenBit,
-    aac: /^\s*A\S*\s+aac\s/m.test(encoders.stdout),
+    aac: /^\s*A\S*\s+aac\s/m.test(encoders),
   };
 }
 

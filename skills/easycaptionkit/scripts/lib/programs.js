@@ -406,4 +406,17 @@ function locate(spec) {
   return look(knownPlaces(spec)).file || "";
 }
 
-module.exports = { exe, enterable, onPath, quoted, happened, find, locate, startFailure, LIMIT };
+// What the program found at `place` printed when run with `args` after it
+// answered its version, as asked about `what` ("its encoders"): its
+// output, read only once it ended well. One that fails or is stopped
+// stops the run with how it ended, so a program that cannot answer is not
+// taken for one without the encoder or the filter asked for.
+async function probe(spec, place, args, what, limit = LIMIT) {
+  const r = await ask(place.file, args, { limit });
+  if (r.err && Object.hasOwn(SHORT, r.err.code)) throw short(spec.name, r.err);
+  if (!r.err && !r.late && r.code === 0 && !r.signal) return r.stdout;
+  const asked = args.filter((arg) => arg !== "-hide_banner").join(" ");
+  throw unusable(spec, place, `failed when asked ${what} (${asked}): ${r.err ? unstartable(place.file, r.err) : happened(r, limit)}`);
+}
+
+module.exports = { exe, enterable, onPath, quoted, happened, find, locate, probe, startFailure, LIMIT };

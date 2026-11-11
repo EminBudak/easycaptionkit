@@ -957,7 +957,7 @@ async function captionVideo(videoFile, options) {
   if (chrome) chrome.catch(() => {});
   const tools = await ffmpeg.ready();
   if (chrome) await chrome;
-  const bins = { ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe };
+  const bins = { ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe, places: tools.places };
   const [video, caps] = await Promise.all([ffmpeg.readVideo(videoFile, bins), ffmpeg.capabilities(bins, tools.version)]);
   notStill(video, videoFile);
   if (!caps.encoder) throw new Error("This ffmpeg has no H.264 encoder (libx264, VideoToolbox, OpenH264 or Media Foundation), so it cannot write the captioned MP4");

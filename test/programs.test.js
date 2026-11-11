@@ -461,6 +461,43 @@ test("subtitles --video reads the video with ffprobe alone, so an ffmpeg that ca
   }
 });
 
+test("an ffmpeg that answers its version and then fails or is stopped when asked its encoders or its filters is said to, where the run said it had no H.264 encoder, no overlay filter or no libass; one with no H.264 encoder is refused with all four a run can use named", { skip: (!hasFfmpeg && "needs ffmpeg") || (!posix && "the stand-ins are shell scripts") }, () => {
+  const root = path.join(dir, "probes");
+  const refused = refuser(root);
+  const clip = video({ width: 320, height: 240, seconds: 1, sound: "none" });
+  const words = write("probes-words.json", { words: evenWords("one two three", { start: 0.1, each: 0.2, gap: 0.05 }) });
+  const ffmpeg = real("ffmpeg");
+  const standIn = (name, on, then) => {
+    const file = path.join(root, name, "ffmpeg");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `#!/bin/sh\ncase " $* " in *" ${on} "*) ${then};; esac\nexec ${JSON.stringify(ffmpeg)} "$@"\n`, { mode: 0o755 });
+    return file;
+  };
+  const failed = (file, what, how) => `easycaptionkit needs ffmpeg, and FFMPEG_PATH points to ${file}, which failed when asked ${what}: ${how}. ${ADVICE.FFMPEG_PATH}`;
+  const env = (file) => ({ FFMPEG_PATH: file, FFPROBE_PATH: real("ffprobe") });
+  const killEncoders = standIn("kill-encoders", "-encoders", "kill -KILL $$");
+  const killFilters = standIn("kill-filters", "-filters", "kill -KILL $$");
+  const failEncoders = standIn("fail-encoders", "-encoders", "echo 'something failed while listing' >&2; exit 1");
+  const crashX264 = standIn("crash-x264", "encoder=libx264", "kill -SEGV $$");
+  const failSetparams = standIn("fail-setparams", "filter=setparams", "echo 'no help here' >&2; exit 1");
+  const lists = /^\s*V\S*\s+libx264\s/m.test(spawnSync(ffmpeg, ["-hide_banner", "-encoders"], { encoding: "utf8" }).stdout);
+  const setparams = /^\s*\S+\s+setparams\s/m.test(spawnSync(ffmpeg, ["-hide_banner", "-filters"], { encoding: "utf8" }).stdout);
+  const chrome = has("google-chrome") || has("chromium");
+  for (const libass of chrome ? [[], ["--libass"]] : [["--libass"]]) {
+    const args = [clip, "--words", words, ...libass];
+    refused(env(killEncoders), args, failed(killEncoders, "its encoders (-encoders)", "it was stopped by SIGKILL"));
+    refused(env(killFilters), args, failed(killFilters, "its filters (-filters)", "it was stopped by SIGKILL"));
+    refused(env(failEncoders), args, failed(failEncoders, "its encoders (-encoders)", 'it printed "something failed while listing" and exited with 1'));
+    if (lists) refused(env(crashX264), args, failed(crashX264, "about its libx264 (-h encoder=libx264)", "it was stopped by SIGSEGV"));
+    if (setparams) refused(env(failSetparams), args, failed(failSetparams, "about its setparams filter (-h filter=setparams)", 'it printed "no help here" and exited with 1'));
+  }
+  // An ffmpeg that lists no H.264 encoder.
+  const noH264 = path.join(root, "no-h264", "ffmpeg");
+  fs.mkdirSync(path.dirname(noH264), { recursive: true });
+  fs.writeFileSync(noH264, `#!/bin/sh\ncase " $* " in *" -encoders "*) ${JSON.stringify(ffmpeg)} "$@" | grep -v -E 'h264|x264'; exit 0;; esac\nexec ${JSON.stringify(ffmpeg)} "$@"\n`, { mode: 0o755 });
+  refused(env(noH264), [clip, "--words", words, "--libass"], "This ffmpeg has no H.264 encoder (libx264, VideoToolbox, OpenH264 or Media Foundation), so it cannot write the captioned MP4");
+});
+
 test("a program a run checked that the system cannot start during the work says what the system said or is short of, and one started in a work folder that is gone says so", { skip: (!hasFfmpeg && "needs ffmpeg") || (!posix && "needs a shell's ffmpeg") }, async () => {
   const ffmpeg = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
   const failure = (code, file = "/opt/ffmpeg/ffprobe") => programs.startFailure(file, Object.assign(new Error(`spawn ${file} ${code}`), { code, errno: -require("node:os").constants.errno[code], syscall: `spawn ${file}` })).message;
