@@ -18,7 +18,7 @@ const { captionLayout, charsThatFit, defaultPlaces, shapeOf } = require("./place
 const { chooseLook, variableFace, machineFont, fallbackFont } = require("./look");
 const { fontLike } = require("./fontfile");
 const ffmpeg = require("./ffmpeg");
-const { findChrome, missingChrome, chromeNamedNothing, tempProblem } = require("./chrome");
+const { chromeReady, chromeProblem, tempProblem } = require("./chrome");
 const { renderStates } = require("./render");
 const { safeZonesPng, sheetPng, plainPictures, shotOf } = require("./draw");
 const { captionsMarkdown, captionsJson, subtitlesMarkdown, arg, subtitlesCommand, shown, captionsOf, lettersOf, boxesText, installText } = require("./report");
@@ -945,13 +945,20 @@ async function captionVideo(videoFile, options) {
   writable(dir);
   const notes = recover(path.resolve(dir), dir);
   const view = guard(dir, { video: videoFile, timeline: timelineOf(videoFile), words: options.words, brand: options.brand, fonts: options.fonts });
-  const bins = ffmpeg.tools();
   const useLibass = Boolean(options.libass);
-  if (!useLibass && !findChrome()) throw new Error(missingChrome());
   // Chrome keeps its profile in the temporary folder.
   const temp = useLibass ? "" : tempProblem();
   if (temp) throw new Error(`${temp}. Set it to a folder, or unset it`);
-  const [video, caps] = await Promise.all([ffmpeg.readVideo(videoFile, bins), ffmpeg.capabilities(bins)]);
+  // Each program the run uses is asked its version before the video is
+  // read, Chrome while ffmpeg is: one that cannot be started or does not
+  // answer as itself stops the run with what the system or the program
+  // said, ffmpeg's first.
+  const chrome = useLibass ? null : chromeReady();
+  if (chrome) chrome.catch(() => {});
+  const tools = await ffmpeg.ready();
+  if (chrome) await chrome;
+  const bins = { ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe };
+  const [video, caps] = await Promise.all([ffmpeg.readVideo(videoFile, bins), ffmpeg.capabilities(bins, tools.version)]);
   notStill(video, videoFile);
   if (!caps.encoder) throw new Error("This ffmpeg has no H.264 encoder (libx264, VideoToolbox, OpenH264 or Media Foundation), so it cannot write the captioned MP4");
   if (useLibass && !caps.libass) throw new Error("This ffmpeg has no libass (its ass filter), so --libass cannot draw the captions. Leave out --libass to draw them with Chrome, or install an ffmpeg built with libass");
@@ -1126,8 +1133,10 @@ async function captionVideo(videoFile, options) {
     const sheetFile = path.join(run.work, "sheet.png");
     // Chrome lays the pictures out. Where there is none, or it cannot start
     // or stops, ffmpeg makes plainer ones: the captions are in the video
-    // by now, and the pictures only show them.
-    let plain = findChrome() ? tempProblem() : chromeNamedNothing() || "no Chrome was found";
+    // by now, and the pictures only show them. A run that drew them with
+    // libass asks Chrome its version here, which a run that drew them with
+    // Chrome did before any work, with the temporary folder.
+    let plain = useLibass ? (await chromeProblem()) || tempProblem() : "";
     if (!plain) {
       try {
         await safeZonesPng({ bins, video, output: out, zones: place.zones, cue: widest, times, file: zonesFile, dir: run.work, frameTags });
@@ -1321,6 +1330,9 @@ async function makeSubtitles(wordsFile, options) {
   writable(dir);
   const notes = recover(path.resolve(dir), dir);
   const view = guard(dir, { words: wordsFile, video: options.video, brand: options.brand, fonts: options.fonts }, { subtitles: true, options });
+  // The video is read with ffprobe alone, which is asked its version first;
+  // no ffmpeg is started, so nothing at ffmpeg's path stops the run.
+  const bins = options.video ? await ffmpeg.readyProbe() : null;
   const read = await loadWords(wordsFile);
   const first = firstFormat(read, origin);
   const look = chooseLook({ ...options, ...scriptsOf(read.words) });
@@ -1328,7 +1340,7 @@ async function makeSubtitles(wordsFile, options) {
   notes.push(...read.notes, ...look.notes);
   let video = null;
   if (options.video) {
-    video = await ffmpeg.readVideo(options.video, ffmpeg.tools());
+    video = await ffmpeg.readVideo(options.video, bins);
     notStill(video, options.video);
     notes.push(...video.notes);
   }

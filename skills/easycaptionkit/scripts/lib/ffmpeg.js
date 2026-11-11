@@ -8,82 +8,67 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { track } = require("./running");
+const programs = require("./programs");
+
+const { exe } = programs;
 
 // Where package managers put it, for an agent or app whose PATH is short.
 const KNOWN = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/snap/bin"];
 
-// The first program by a name on PATH, in a folder `skip` does not pass
-// over.
-function onPath(name, { skip = () => false } = {}) {
-  for (const dir of String(process.env.PATH || "").split(path.delimiter)) {
-    if (!dir || skip(dir)) continue;
-    const file = path.join(dir, name);
-    try {
-      fs.accessSync(file, fs.constants.X_OK);
-      if (fs.statSync(file).isFile()) return file;
-    } catch {
-      // Not here.
-    }
-  }
-  return "";
-}
+const INSTALL = "brew install ffmpeg, sudo apt install ffmpeg or winget install ffmpeg";
 
-const exe = (name) => (process.platform === "win32" ? `${name}.exe` : name);
-
-const bare = (value) => !(value.includes("/") || (process.platform === "win32" && value.includes("\\")));
-const isFile = (file) => {
-  try {
-    return fs.statSync(file).isFile();
-  } catch {
-    return false;
-  }
+// ffmpeg as a run looks for it and asks it its version (see programs.find()).
+const FFMPEG = {
+  name: "ffmpeg",
+  variable: "FFMPEG_PATH",
+  args: ["-version"],
+  answers: (stdout) => /^ffmpeg version\b/m.test(stdout),
+  names: [exe("ffmpeg")],
+  known: KNOWN,
+  none: `easycaptionkit needs ffmpeg, and none was found. Install it (${INSTALL}) or set FFMPEG_PATH to one.`,
+  advice: {
+    variable: `Set FFMPEG_PATH to an ffmpeg that runs, or unset it and install one (${INSTALL}).`,
+    found: `Install ffmpeg (${INSTALL}) or set FFMPEG_PATH to an ffmpeg that runs.`,
+  },
 };
 
-// A program named in the environment, as a whole path: a path is taken
-// from the folder the run started in, so a program run in another folder
-// (the encode runs in its work folder) still finds it, and a bare name is
-// looked up on PATH, as a shell would. Empty when it is not there.
-function given(value) {
-  if (bare(value)) return onPath(value) || onPath(exe(value));
-  const file = path.resolve(value);
-  return isFile(file) ? file : "";
+// ffprobe, which sits next to ffmpeg in every package: the one next to the
+// ffmpeg at `ffmpeg`, when that is not ffmpeg's own file, else as ffmpeg is
+// looked for.
+const FFPROBE = (ffmpeg) => ({
+  name: "ffprobe",
+  variable: "FFPROBE_PATH",
+  args: ["-version"],
+  answers: (stdout) => /^ffprobe version\b/m.test(stdout),
+  names: [exe("ffprobe")],
+  known: KNOWN,
+  first: () => (ffmpeg ? [{ file: path.join(path.dirname(ffmpeg), exe("ffprobe")), name: "ffprobe", where: `next to ${ffmpeg}`, next: true }].filter((place) => place.file !== ffmpeg) : []),
+  none: `easycaptionkit needs ffprobe, and none was found${ffmpeg ? ` next to ${ffmpeg} or` : ""} on PATH. Install ffmpeg, which comes with ffprobe (${INSTALL}), or set FFPROBE_PATH to one.`,
+  advice: {
+    variable: `Set FFPROBE_PATH to an ffprobe that runs, or unset it and install ffmpeg, which comes with ffprobe (${INSTALL}).`,
+    next: "Set FFPROBE_PATH to an ffprobe that runs.",
+    found: `Install ffmpeg, which comes with ffprobe (${INSTALL}), or set FFPROBE_PATH to an ffprobe that runs.`,
+  },
+});
+
+// ffmpeg and ffprobe, each found and asked its version before any work,
+// as { ffmpeg, ffprobe, version }: their files and what ffmpeg said, which
+// capabilities() reads. ffprobe is looked for next to the ffmpeg that
+// answered.
+// A program that cannot be started or does not answer as itself stops the
+// run there, as programs.find() says, ffmpeg's first.
+async function ready(limit = programs.LIMIT) {
+  const ffmpeg = await programs.find(FFMPEG, limit);
+  const ffprobe = await programs.find(FFPROBE(ffmpeg.file), limit);
+  return { ffmpeg: ffmpeg.file, ffprobe: ffprobe.file, version: ffmpeg.stdout };
 }
 
-// What an environment variable that names a program names, when that is
-// no program: "FFMPEG_PATH is /opt/ffmpeg, and there is no file there".
-// Empty when it is not set or names one.
-function namedNothing(variable) {
-  const value = process.env[variable];
-  if (!value || given(value)) return "";
-  const what = bare(value) ? "and no program by that name is on PATH" : fs.existsSync(path.resolve(value)) ? "a folder, not a program" : "and there is no file there";
-  return `${variable} is ${value}, ${what}`;
-}
-
-function findFfmpeg() {
-  if (process.env.FFMPEG_PATH) return given(process.env.FFMPEG_PATH);
-  return onPath(exe("ffmpeg")) || (process.platform === "win32" ? "" : KNOWN.map((d) => path.join(d, "ffmpeg")).find((f) => fs.existsSync(f)) || "");
-}
-
-// ffprobe sits next to ffmpeg in every package.
-function findFfprobe(ffmpeg) {
-  if (process.env.FFPROBE_PATH) return given(process.env.FFPROBE_PATH);
-  const next = ffmpeg ? path.join(path.dirname(ffmpeg), exe("ffprobe")) : "";
-  if (next && fs.existsSync(next)) return next;
-  return onPath(exe("ffprobe")) || (process.platform === "win32" ? "" : KNOWN.map((d) => path.join(d, "ffprobe")).find((f) => fs.existsSync(f)) || "");
-}
-
-const MISSING = "ffmpeg and ffprobe were not found. Install them (brew install ffmpeg, sudo apt install ffmpeg or winget install ffmpeg) or set FFMPEG_PATH and FFPROBE_PATH to them.";
-
-function tools() {
-  for (const [variable, name] of [["FFMPEG_PATH", "ffmpeg"], ["FFPROBE_PATH", "ffprobe"]]) {
-    const nothing = namedNothing(variable);
-    if (nothing) throw new Error(`${nothing}. Set it to the path of ${name}, or unset it to use the one on PATH.`);
-  }
-  const ffmpeg = findFfmpeg();
-  const ffprobe = findFfprobe(ffmpeg);
-  if (!ffmpeg) throw new Error(MISSING);
-  if (!ffprobe) throw new Error(`ffprobe was not found next to ${ffmpeg} or on PATH. It comes with ffmpeg: install it, or set FFPROBE_PATH to it.`);
-  return { ffmpeg, ffprobe };
+// ffprobe alone, for a run that reads a video and starts no ffmpeg: found
+// and asked as ready() does, next to the ffmpeg the run would take, which
+// is not run, so nothing at ffmpeg's path stops it.
+async function readyProbe(limit = programs.LIMIT) {
+  const ffprobe = await programs.find(FFPROBE(programs.locate(FFMPEG)), limit);
+  return { ffprobe: ffprobe.file };
 }
 
 // What ffmpeg prints once it has given up, after the lines that say why:
@@ -152,20 +137,42 @@ function whyFailed({ code, signal, stderr }, who = "it") {
 // error, not a hang, unless what `busy` gives, as the size and the time of
 // the file it writes, changed in that time: ffmpeg prints nothing while it
 // writes a whole MP4 again to move its index to the front. With `binary`,
-// stdout is the bytes it wrote, not text.
+// stdout is the bytes it wrote, not text. The programs are the ones a run
+// checked before any work, so one that cannot be started now says what
+// the system said, or that the folder it was to run in is gone, never the
+// system's code alone: Node throws some of those errors at once and gives
+// the others a moment later.
 function run(binary, args, { quiet = 120_000, onStdout = null, cwd = undefined, busy = null, binary: bytes = false } = {}) {
   return new Promise((resolve, reject) => {
+    const failed = (err) => {
+      if (!/^spawn\b/.test(err.syscall || "")) return err;
+      // A start that fails for want of the folder it runs in is no fault of
+      // the program's.
+      if (cwd && !programs.enterable(cwd)) return new Error(`${path.basename(binary)} could not be started in ${cwd}, a folder that is not there any more or may not be entered`);
+      return programs.startFailure(binary, err);
+    };
     let child;
     try {
       child = track(spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"], cwd }));
     } catch (err) {
-      reject(err);
+      reject(failed(err));
       return;
     }
     let stdout = "";
     const chunks = [];
     let stderr = "";
     let timer = null;
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(failed(err));
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, stdout: bytes ? Buffer.concat(chunks) : stdout, stderr });
+    });
+    // With no file descriptor left for them Node makes no pipes, and says
+    // why a moment later.
+    if (!child.stdout || !child.stderr) return;
     const arm = () => {
       clearTimeout(timer);
       const before = busy ? busy() : null;
@@ -186,14 +193,6 @@ function run(binary, args, { quiet = 120_000, onStdout = null, cwd = undefined, 
     child.stderr.on("data", (d) => {
       arm();
       stderr = (stderr + d).slice(-40_000);
-    });
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err.code === "ENOENT" ? new Error(MISSING) : err);
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      resolve({ code, signal, stdout: bytes ? Buffer.concat(chunks) : stdout, stderr });
     });
   });
 }
@@ -567,11 +566,13 @@ const round3 = (value) => Math.round(value * 1000) / 1000;
 
 // ─── what this ffmpeg can do ──────────────────────────────────────────────
 
-async function capabilities(bins) {
-  const [about, filters, encoders] = await Promise.all([run(bins.ffmpeg, ["-hide_banner", "-version"], { quiet: 20_000 }), run(bins.ffmpeg, ["-hide_banner", "-filters"], { quiet: 20_000 }), run(bins.ffmpeg, ["-hide_banner", "-encoders"], { quiet: 20_000 })]);
+// What this ffmpeg can do: its version number, from what it said when
+// ready() asked it, and its filters and encoders.
+async function capabilities(bins, version) {
+  const [filters, encoders] = await Promise.all([run(bins.ffmpeg, ["-hide_banner", "-filters"], { quiet: 20_000 }), run(bins.ffmpeg, ["-hide_banner", "-encoders"], { quiet: 20_000 })]);
   // 4.4 is the oldest ffmpeg the kit is tried on: Ubuntu 22.04's. A build
   // from git says no number and is newer.
-  const v = /ffmpeg version n?(\d+)\.(\d+)/.exec(about.stdout);
+  const v = /ffmpeg version n?(\d+)\.(\d+)/.exec(version);
   const atLeast = (major, minor) => !v || Number(v[1]) > major || (Number(v[1]) === major && Number(v[2]) >= minor);
   if (!atLeast(4, 4)) throw new Error(`ffmpeg 4.4 or newer is needed, and this one is ${v[1]}.${v[2]}. Install a newer one (brew install ffmpeg, or a static build) or set FFMPEG_PATH to it.`);
   const hasFilter = (name) => new RegExp(`^\\s*\\S+\\s+${name}\\s`, "m").test(filters.stdout);
@@ -1032,4 +1033,4 @@ async function frameAt(bins, file, t, output, { width = 0, retag = "", untag = "
   return output;
 }
 
-module.exports = { tools, findFfmpeg, findFfprobe, given, namedNothing, probe, readVideo, packetsOf, frameTimes, rateOf, steadyRate, fillFor, capabilities, burn, frameAt, run, whyFailed, optionNames, onPath, MISSING, colorOf, prepareChain, filterPath, libassFilter, hdrLevel, fineBase, matrixLine, as601, libassFollows, assColors, pixelFormat };
+module.exports = { FFMPEG, FFPROBE, ready, readyProbe, onPath: programs.onPath, probe, readVideo, packetsOf, frameTimes, rateOf, steadyRate, fillFor, capabilities, burn, frameAt, run, whyFailed, optionNames, colorOf, prepareChain, filterPath, libassFilter, hdrLevel, fineBase, matrixLine, as601, libassFollows, assColors, pixelFormat };

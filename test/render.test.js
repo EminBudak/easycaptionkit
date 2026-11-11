@@ -905,9 +905,6 @@ test("an FFMPEG_PATH and FFPROBE_PATH given from the folder the run starts in ar
     const plain = caption([video, "--words", words, "--libass", "--out", "out-plain"], { cwd: where, env: { ...env, CHROME_PATH: "/nonexistent/chrome" } });
     assert.ok(fs.statSync(path.join(where, "out-plain", "sheet.png")).size > 0, plain.notes.join(" | "));
   }
-  const { given } = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
-  assert.equal(given("./no-such-ffmpeg"), "");
-  assert.ok(path.isAbsolute(given("ffmpeg")), "a bare name is looked up on PATH");
 });
 
 test("a line wider than the safe space comes out smaller with libass and in captions.ass, by Chrome's measure where Chrome drew it", { skip }, () => {
@@ -1682,7 +1679,8 @@ test("without Chrome, --libass draws the captions with ffmpeg, and the pictures 
 test("a Chrome that cannot start its sandbox stops the run before the encode and points to --libass, which draws the captions and plainer pictures without it, and one the system stops with SIGKILL says to run fewer jobs at once too", { skip: (!h.hasFfmpeg && "needs ffmpeg") || (process.platform === "win32" && "needs a shell script for Chrome") }, () => {
   const broken = path.join(h.dir, "broken-chrome", "chrome");
   fs.mkdirSync(path.dirname(broken), { recursive: true });
-  fs.writeFileSync(broken, "#!/bin/sh\necho '[0101/000000.000000:FATAL:zygote_host_impl_linux.cc(127)] No usable sandbox! Update your kernel or see the docs.' >&2\nexit 1\n", { mode: 0o755 });
+  // It answers --version, which a run asks before any work, as Chrome does without its sandbox.
+  fs.writeFileSync(broken, "#!/bin/sh\n[ \"$1\" = --version ] && { echo 'Chromium 140.0.0.0, a stand-in'; exit 0; }\necho '[0101/000000.000000:FATAL:zygote_host_impl_linux.cc(127)] No usable sandbox! Update your kernel or see the docs.' >&2\nexit 1\n", { mode: 0o755 });
   const env = { env: { ...process.env, CHROME_PATH: broken } };
   const video = h.video({ width: 360, height: 640, seconds: 2 });
   const words = h.write("broken-chrome.json", { words: h.evenWords("drawn without a sandbox", { start: 0.2 }) });
@@ -1691,10 +1689,26 @@ test("a Chrome that cannot start its sandbox stops the run before the encode and
   assert.match(stopped.stderr, /Chrome stopped \(exit 1\): Chrome could not start its sandbox here \(No usable sandbox! Update your kernel or see the docs\.\)\. Pass --libass to have ffmpeg draw the captions without Chrome\n/);
   assert.doesNotMatch(stopped.stderr, /Encoding/);
   assert.equal(fs.existsSync(out("broken-chrome-run")), false);
+  // A Chrome with no #! line, which Linux has /bin/sh run, that answered when asked its version, stopped for its
+  // sandbox too, not for what its file is.
+  const sandboxNote = /^ffmpeg made sheet\.png and safe-zones\.png, plainer than Chrome lays them out, since Chrome could not draw them: Chrome stopped \(exit 1\): Chrome could not start its sandbox here/;
+  if (process.platform === "linux") {
+    const unmarked = path.join(h.dir, "unmarked-chrome", "chrome");
+    fs.mkdirSync(path.dirname(unmarked), { recursive: true });
+    fs.writeFileSync(unmarked, fs.readFileSync(broken, "utf8").replace(/^#!.*\n/, ""), { mode: 0o755 });
+    const unmarkedEnv = { env: { ...process.env, CHROME_PATH: unmarked } };
+    const plain = h.run([video, "--words", words, "--out", out("unmarked-chrome-run")], unmarkedEnv);
+    assert.equal(plain.status, 1);
+    assert.match(plain.stderr, /\neasycaptionkit: Chrome stopped \(exit 1\): Chrome could not start its sandbox here \(No usable sandbox! Update your kernel or see the docs\.\)\. Pass --libass to have ffmpeg draw the captions without Chrome\n$/);
+    if (/ subtitles /.test(spawnSync("ffmpeg", ["-hide_banner", "-filters"], { encoding: "utf8" }).stdout)) {
+      const drawn = caption([video, "--words", words, "--libass", "--out", out("unmarked-chrome-libass")], unmarkedEnv);
+      assert.ok(drawn.notes.some((n) => sandboxNote.test(n)), drawn.notes.join(" | "));
+    }
+  }
   // A Chrome the system stops with SIGKILL, as when memory runs out on a busy machine, gets what ffmpeg's SIGKILL gets.
   const killed = path.join(h.dir, "killed-chrome", "chrome");
   fs.mkdirSync(path.dirname(killed), { recursive: true });
-  fs.writeFileSync(killed, "#!/bin/sh\nkill -KILL $$\n", { mode: 0o755 });
+  fs.writeFileSync(killed, "#!/bin/sh\n[ \"$1\" = --version ] && { echo 'Chromium 140.0.0.0, a stand-in'; exit 0; }\nkill -KILL $$\n", { mode: 0o755 });
   const oom = h.run([video, "--words", words, "--out", out("killed-chrome-run")], { env: { ...process.env, CHROME_PATH: killed } });
   assert.equal(oom.status, 1);
   assert.match(oom.stderr, /\neasycaptionkit: Chrome was stopped by SIGKILL, as the system stops a program when memory runs out\. Run again with fewer jobs at once or with a smaller video, or pass --libass to have ffmpeg draw the captions without Chrome\n$/);
@@ -1703,10 +1717,10 @@ test("a Chrome that cannot start its sandbox stops the run before the encode and
   const c = caption([video, "--words", words, "--libass", "--out", out("broken-chrome-libass")], env);
   assert.equal(c.drawnWith, "libass");
   for (const name of ["captioned.mp4", "sheet.png", "safe-zones.png"]) assert.ok(fs.statSync(path.join(out("broken-chrome-libass"), name)).size > 0, name);
-  assert.ok(c.notes.some((n) => /^ffmpeg made sheet\.png and safe-zones\.png, plainer than Chrome lays them out, since Chrome could not draw them: Chrome stopped \(exit 1\): Chrome could not start its sandbox here/.test(n)), c.notes.join(" | "));
+  assert.ok(c.notes.some((n) => sandboxNote.test(n)), c.notes.join(" | "));
   // With CHROME_PATH naming nothing, the note says so.
   const none = caption([video, "--words", words, "--libass", "--out", out("no-chrome-libass")], { env: { ...process.env, CHROME_PATH: "/nonexistent/chrome" } });
-  assert.ok(none.notes.some((n) => /plainer than Chrome lays them out, since CHROME_PATH is \/nonexistent\/chrome, and there is no file there\./.test(n)), none.notes.join(" | "));
+  assert.ok(none.notes.some((n) => /plainer than Chrome lays them out, since CHROME_PATH points to \/nonexistent\/chrome, where there is none\./.test(n)), none.notes.join(" | "));
 });
 
 test("a Chrome the system stops while a page loads fails the run with what SIGKILL gets where Chrome draws the captions, and leaves the pictures to ffmpeg where it draws them, where the process ended with code 0 and said nothing", { skip: skip || (process.platform === "win32" && "needs a shell script for Chrome") }, () => {
@@ -1749,7 +1763,8 @@ chrome.on("exit", () => process.kill(process.pid, "SIGKILL"));
 `,
   );
   const wrapper = path.join(path.dirname(proxy), "chrome");
-  fs.writeFileSync(wrapper, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(proxy)} "$@"\n`, { mode: 0o755 });
+  // The version a run asks before any work comes from the real Chrome, and counts as no launch.
+  fs.writeFileSync(wrapper, `#!/bin/sh\n[ "$1" = --version ] && exec "$REAL_CHROME" --version\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(proxy)} "$@"\n`, { mode: 0o755 });
   const video = h.video({ width: 360, height: 640, seconds: 2 });
   const words = h.write("dying-chrome.json", { words: h.evenWords("drawn while Chrome goes", { start: 0.2 }) });
   const count = path.join(path.dirname(proxy), "count");

@@ -12,49 +12,85 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
-const { onPath, given, namedNothing } = require("./ffmpeg");
+const programs = require("./programs");
 const { track, trackFolder, untrackFolder, kill, sleep } = require("./running");
 
-// A Chrome named in the environment is found as FFMPEG_PATH is: a bare
-// name on PATH, a path from the folder the run starts in.
-function findChrome() {
-  const named = process.env.CHROME_PATH;
-  if (named) return given(named);
-  const mac = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-    path.join(os.homedir(), "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-  ];
-  const win = [
-    path.join(process.env.PROGRAMFILES || "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
-    path.join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google\\Chrome\\Application\\chrome.exe"),
-    path.join(process.env.LOCALAPPDATA || "", "Google\\Chrome\\Application\\chrome.exe"),
-    path.join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Microsoft\\Edge\\Application\\msedge.exe"),
-  ];
-  const listed = process.platform === "darwin" ? mac : process.platform === "win32" ? win : [];
-  for (const file of listed) if (file && fs.existsSync(file)) return file;
-  for (const name of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "microsoft-edge", "brave-browser"]) {
-    const found = onPath(name);
-    if (found) return found;
+const LIBASS = "--libass has ffmpeg draw the captions without Chrome.";
+
+// Chrome as a run looks for it and asks it its version (see
+// programs.find()): the path CHROME_PATH gives, or a name on PATH, as
+// FFMPEG_PATH is read; else where macOS and Windows install it, and on
+// PATH by each of its names. It answers with a version number, as "Google
+// Chrome 155.0.8059.84". On Windows, where Chrome prints no version, it is
+// not asked, and taken once nothing keeps it from running.
+const CHROME = {
+  name: "Chrome",
+  variable: "CHROME_PATH",
+  args: ["--version"],
+  answers: (stdout) => /\d+\.\d+/.test(stdout),
+  names: ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "microsoft-edge", "brave-browser"],
+  first: () => {
+    const mac = [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      path.join(os.homedir(), "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    ];
+    const win = [
+      path.join(process.env.PROGRAMFILES || "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
+      path.join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Google\\Chrome\\Application\\chrome.exe"),
+      path.join(process.env.LOCALAPPDATA || "", "Google\\Chrome\\Application\\chrome.exe"),
+      path.join(process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", "Microsoft\\Edge\\Application\\msedge.exe"),
+    ];
+    const listed = process.platform === "darwin" ? mac : process.platform === "win32" ? win : [];
+    return listed.filter(Boolean).map((file) => ({ file, name: "Chrome", where: "installed on this machine" }));
+  },
+  ask: process.platform !== "win32",
+  none: `easycaptionkit needs Chrome to draw the captions, and none was found. Install Google Chrome or Chromium, or set CHROME_PATH to one. ${LIBASS}`,
+  advice: {
+    variable: `Set CHROME_PATH to a Chrome that runs, or unset it and install Google Chrome or Chromium. ${LIBASS}`,
+    found: `Install Google Chrome or Chromium, or set CHROME_PATH to a Chrome that runs. ${LIBASS}`,
+  },
+};
+
+// The Chrome a run would take, by what is at its place alone, not run, or
+// "" where there is none.
+const findChrome = () => programs.locate(CHROME);
+
+// The Chrome that answered, for the CHROME_PATH, the PATH and the folder
+// the run works with now: a run asks it once, and every Chrome it starts
+// to draw is that one. A failure is not kept, so a later call asks again.
+let checked = null;
+
+// The Chrome a run draws with, found and asked its version before any work,
+// so one that cannot be started or does not answer as Chrome stops the run
+// with what the system or the program said, not once it begins to draw.
+async function chromeReady(limit = programs.LIMIT) {
+  let here = "";
+  try {
+    here = process.cwd();
+  } catch {
+    // A folder taken away since: only PATH's relative entries read from it.
   }
-  return "";
+  const key = JSON.stringify([process.env.CHROME_PATH, process.env.PATH, here]);
+  if (checked && checked.key === key) return checked.file;
+  const { file } = await programs.find(CHROME, limit);
+  checked = { key, file };
+  return file;
 }
 
-const MISSING = "No Chrome was found to draw the captions with. Install Google Chrome or Chromium, set CHROME_PATH to it, or pass --libass to have ffmpeg draw them.";
-
-// The variable that names this run's Chrome, when it names no program:
-// what it names, as a sentence without its end. Empty otherwise.
-function chromeNamedNothing() {
-  return namedNothing("CHROME_PATH");
-}
-
-// Why there is no Chrome: what the variable names, or that none is on the
-// machine.
-function missingChrome() {
-  const nothing = chromeNamedNothing();
-  return nothing ? `${nothing}. Set it to the path of Chrome or Chromium, or pass --libass to have ffmpeg draw the captions.` : MISSING;
+// For a run that draws without Chrome and uses it for its pictures alone:
+// why there is no Chrome to use, as words that follow "since", or "" when
+// it answers.
+async function chromeProblem() {
+  try {
+    await chromeReady();
+    return "";
+  } catch (err) {
+    if (!err.unusable) throw err;
+    return err.why;
+  }
 }
 
 // An error of Chrome's own, not of a file or of ffmpeg: `start` when Chrome
@@ -225,9 +261,17 @@ function whyStopped(stderr, temp) {
   return text;
 }
 
+// Starts the Chrome a run checked before any work (see chromeReady()),
+// asking it first where it was not. A start the system refuses says what
+// the system said, never its code alone.
 async function launch({ width = 1920, height = 1080 } = {}) {
-  const chrome = findChrome();
-  if (!chrome) throw failed(missingChrome(), { start: true });
+  let chrome;
+  try {
+    chrome = await chromeReady();
+  } catch (err) {
+    throw failed(err.message, { start: true });
+  }
+  const refused = (err) => failed(programs.startFailure(chrome, err, "Chrome").message, { start: true });
   const temp = chromeTemp();
   clearOldProfiles();
   // A profile Chrome cannot have is a Chrome that cannot start.
@@ -271,13 +315,20 @@ async function launch({ width = 1920, height = 1080 } = {}) {
     child = track(spawn(chrome, args, { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], env: { ...process.env, TMPDIR: temp, CHROME_CONFIG_HOME: path.join(profile, "config") } }), stop);
   } catch (err) {
     drop();
-    throw failed(`Chrome could not start: ${err.message}`, { start: true });
+    throw refused(err);
   }
   // Settles when Chrome is gone, whether it exited or never started.
   const gone = new Promise((resolve) => {
     child.once("exit", resolve);
     child.once("error", resolve);
   });
+  // With no file descriptor left for them Node makes no pipes, and says
+  // why a moment later.
+  if (!child.stdio || !child.stderr || !child.stdio[3] || !child.stdio[4]) {
+    const err = await new Promise((resolve) => child.once("error", resolve));
+    drop();
+    throw refused(err);
+  }
   let stderr = "";
   child.stderr.on("data", (d) => (stderr = (stderr + d).slice(-8000)));
   const told = new Promise((resolve) => child.stderr.once("close", resolve));
@@ -312,7 +363,7 @@ async function launch({ width = 1920, height = 1080 } = {}) {
     fall(dead);
   });
   child.on("error", (err) => {
-    dead = failed(`Chrome could not start: ${err.message}`, { start: true });
+    dead = refused(err);
     for (const waiting of pending.values()) waiting.reject(dead);
     pending.clear();
     fall(dead);
@@ -421,4 +472,4 @@ async function openPage(browser, file, { width, height, transparent = false }) {
   return page;
 }
 
-module.exports = { findChrome, missingChrome, chromeNamedNothing, tempProblem, launch, evaluate, openPage, whyStopped, chromeTemp, clearOldProfiles, MISSING };
+module.exports = { CHROME, findChrome, chromeReady, chromeProblem, tempProblem, launch, evaluate, openPage, whyStopped, chromeTemp, clearOldProfiles };

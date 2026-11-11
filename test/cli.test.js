@@ -204,7 +204,7 @@ test("a video, words, a brand or fonts given as an address is refused before any
   }
 });
 
-test("files that are not there, a folder that cannot be written, a link to nowhere or a name too long on the way to it, and no ffmpeg or Chrome are told before any work, leaving nothing behind", () => {
+test("files that are not there, a folder that cannot be written, a link to nowhere or a name too long on the way to it, and no ffmpeg or Chrome, or one this user may not run, are told before any work, leaving nothing behind", () => {
   const words = write("cli-words.json", { words: evenWords("one two three") });
   const missingVideo = run([path.join(dir, "nope.mp4"), "--words", words, "--out", path.join(dir, "cli-a")]);
   assert.equal(missingVideo.status, 1);
@@ -233,25 +233,67 @@ test("files that are not there, a folder that cannot be written, a link to nowhe
     assert.match(long.stderr, /^easycaptionkit: Cannot write to .*x{300}.out: a name in it is longer than the disk takes\n$/);
     assert.deepEqual(fs.readdirSync(work), ["dangle"]);
   }
-  // A program named in the environment that is not there is said to be so, not missing from the machine.
+  // A program named in the environment that is not there is said to be so, not missing from the machine, and so is one
+  // this user may not run, named or next to the ffmpeg named, where the run ended with the system's "spawn ... EACCES".
+  // The programs are looked at before the video is read, ffmpeg first.
+  const INSTALL = "brew install ffmpeg, sudo apt install ffmpeg or winget install ffmpeg";
+  const ADVICE = {
+    FFMPEG_PATH: `Set FFMPEG_PATH to an ffmpeg that runs, or unset it and install one (${INSTALL}).`,
+    FFPROBE_PATH: `Set FFPROBE_PATH to an ffprobe that runs, or unset it and install ffmpeg, which comes with ffprobe (${INSTALL}).`,
+    CHROME_PATH: "Set CHROME_PATH to a Chrome that runs, or unset it and install Google Chrome or Chromium. --libass has ffmpeg draw the captions without Chrome.",
+  };
   const noFfmpeg = run([__filename, "--words", words, "--out", path.join(dir, "cli-c")], { env: { ...process.env, FFMPEG_PATH: "/nonexistent/ffmpeg" } });
   assert.equal(noFfmpeg.status, 1);
-  assert.equal(noFfmpeg.stderr, "easycaptionkit: FFMPEG_PATH is /nonexistent/ffmpeg, and there is no file there. Set it to the path of ffmpeg, or unset it to use the one on PATH.\n");
-  const noProbe = run([__filename, "--words", words, "--out", path.join(dir, "cli-c")], { env: { ...process.env, FFPROBE_PATH: "ffprobe-of-no-one" } });
-  assert.match(noProbe.stderr, /^easycaptionkit: FFPROBE_PATH is ffprobe-of-no-one, and no program by that name is on PATH\. Set it to the path of ffprobe, or unset it/);
+  assert.equal(noFfmpeg.stderr, `easycaptionkit: easycaptionkit needs ffmpeg, and FFMPEG_PATH points to /nonexistent/ffmpeg, where there is none. ${ADVICE.FFMPEG_PATH}\n`);
   const folderFfmpeg = run([__filename, "--words", words, "--out", path.join(dir, "cli-c")], { env: { ...process.env, FFMPEG_PATH: dir } });
-  assert.match(folderFfmpeg.stderr, /^easycaptionkit: FFMPEG_PATH is .*, a folder, not a program\./);
-  const noChrome = run([__filename, "--words", words, "--out", path.join(dir, "cli-d")], { env: { ...process.env, CHROME_PATH: "/nonexistent/chrome" } });
-  assert.equal(noChrome.status, 1);
-  assert.equal(noChrome.stderr, "easycaptionkit: CHROME_PATH is /nonexistent/chrome, and there is no file there. Set it to the path of Chrome or Chromium, or pass --libass to have ffmpeg draw the captions.\n");
+  assert.equal(folderFfmpeg.stderr, `easycaptionkit: easycaptionkit needs ffmpeg, and FFMPEG_PATH points to ${dir}, which is a folder. ${ADVICE.FFMPEG_PATH}\n`);
+  if (hasFfmpeg) {
+    const noProbe = run([__filename, "--words", words, "--out", path.join(dir, "cli-c")], { env: { ...process.env, FFPROBE_PATH: "ffprobe-of-no-one" } });
+    assert.equal(noProbe.stderr, `easycaptionkit: easycaptionkit needs ffprobe, and FFPROBE_PATH names ffprobe-of-no-one, which is not on PATH. ${ADVICE.FFPROBE_PATH}\n`);
+  }
+  if (process.platform !== "win32" && hasFfmpeg) {
+    const which = (name) => require("node:child_process").spawnSync("sh", ["-c", `command -v ${name}`], { encoding: "utf8" }).stdout.trim();
+    const locked = path.join(dir, "locked-programs");
+    const near = path.join(dir, "near-programs");
+    const nearFolder = path.join(dir, "near-folder");
+    for (const folder of [locked, near, path.join(nearFolder, "ffprobe")]) fs.mkdirSync(folder, { recursive: true });
+    const script = (file, mode) => {
+      fs.writeFileSync(file, "#!/bin/sh\nexit 0\n");
+      fs.chmodSync(file, mode);
+    };
+    for (const name of ["ffmpeg", "ffprobe", "chrome"]) script(path.join(locked, name), 0o644);
+    fs.symlinkSync(which("ffmpeg"), path.join(near, "ffmpeg"));
+    script(path.join(near, "ffprobe"), 0o644);
+    fs.symlinkSync(which("ffmpeg"), path.join(nearFolder, "ffmpeg"));
+    for (const [variable, name, program] of [["FFMPEG_PATH", "ffmpeg", "ffmpeg"], ["FFPROBE_PATH", "ffprobe", "ffprobe"], ["CHROME_PATH", "chrome", "Chrome"]]) {
+      const r = run([__filename, "--words", words, "--out", path.join(dir, "cli-g")], { env: { ...process.env, [variable]: path.join(locked, name) } });
+      assert.equal(r.status, 1);
+      assert.equal(r.stderr, `easycaptionkit: easycaptionkit needs ${program}, and ${variable} points to ${path.join(locked, name)}, which is not executable. ${ADVICE[variable]}\n`);
+    }
+    for (const [folder, what] of [[near, "is not executable"], [nearFolder, "is a folder"]]) {
+      for (const args of [[__filename, "--words", words, "--libass"], ["subtitles", words, "--video", __filename]]) {
+        const r = run([...args, "--out", path.join(dir, "cli-g")], { env: { ...process.env, FFMPEG_PATH: path.join(folder, "ffmpeg") } });
+        assert.equal(r.status, 1);
+        assert.equal(r.stderr, `easycaptionkit: easycaptionkit needs ffprobe, and the ffprobe next to ${path.join(folder, "ffmpeg")}, ${path.join(folder, "ffprobe")}, ${what}. Set FFPROBE_PATH to an ffprobe that runs.\n`);
+      }
+    }
+  }
+  if (hasFfmpeg) {
+    const noChrome = run([__filename, "--words", words, "--out", path.join(dir, "cli-d")], { env: { ...process.env, CHROME_PATH: "/nonexistent/chrome" } });
+    assert.equal(noChrome.status, 1);
+    assert.equal(noChrome.stderr, `easycaptionkit: easycaptionkit needs Chrome, and CHROME_PATH points to /nonexistent/chrome, where there is none. ${ADVICE.CHROME_PATH}\n`);
+    // With no Chrome at all, the message says how to get one and that --libass needs none.
+    if (process.platform === "linux") {
+      const empty = path.join(dir, "no-programs");
+      fs.mkdirSync(empty, { recursive: true });
+      const which = (name) => require("node:child_process").spawnSync("sh", ["-c", `command -v ${name}`], { encoding: "utf8" }).stdout.trim();
+      const none = run([__filename, "--words", words, "--out", path.join(dir, "cli-d")], { env: { ...process.env, PATH: empty, FFMPEG_PATH: which("ffmpeg"), FFPROBE_PATH: which("ffprobe") } });
+      assert.equal(none.stderr, "easycaptionkit: easycaptionkit needs Chrome to draw the captions, and none was found. Install Google Chrome or Chromium, or set CHROME_PATH to one. --libass has ffmpeg draw the captions without Chrome.\n");
+    }
+  }
   // CHROME_PATH alone names a Chrome, as in the other kits.
   const named = run([__filename, "--words", words, "--out", path.join(dir, "cli-d")], { env: { ...process.env, CHROME_PATH: "", EASYCAPTIONKIT_CHROME: "no-chrome-by-this-name" } });
   assert.doesNotMatch(named.stderr, /EASYCAPTIONKIT_CHROME/);
-  // With nothing named, the messages say what is missing, and name the kit once.
-  const { MISSING: noTools } = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
-  const { MISSING: none } = require("../skills/easycaptionkit/scripts/lib/chrome");
-  assert.match(noTools, /^ffmpeg and ffprobe were not found\. Install them/);
-  assert.match(none, /^No Chrome was found to draw the captions with\. Install Google Chrome or Chromium, set CHROME_PATH to it, or pass --libass/);
   const json = run([__filename, "--words", words, "--out", path.join(dir, "cli-e"), "--json"], { env: { ...process.env, CHROME_PATH: "/nonexistent/chrome" } });
   assert.equal(JSON.parse(json.stdout).ok, false);
   // Chrome keeps its profile in the temporary folder: a TMPDIR that names no folder is said before any work.
@@ -264,7 +306,7 @@ test("files that are not there, a folder that cannot be written, a link to nowhe
     const fileTmp = run([__filename, "--words", words, "--out", path.join(dir, "cli-f")], { env: { ...process.env, TMPDIR: __filename } });
     assert.match(fileTmp.stderr, /^easycaptionkit: TMPDIR is .*cli\.test\.js, which is a file, not a folder\. Set it to a folder, or unset it\n$/);
   }
-  for (const name of ["cli-a", "cli-b", "cli-c", "cli-d", "cli-e", "cli-f"]) assert.equal(fs.existsSync(path.join(dir, name)), false, `${name} was made`);
+  for (const name of ["cli-a", "cli-b", "cli-c", "cli-d", "cli-e", "cli-f", "cli-g"]) assert.equal(fs.existsSync(path.join(dir, name)), false, `${name} was made`);
 });
 
 test("a --brand or --fonts that is a pipe, or a kit folder whose brand.json or fonts.css is one, is refused at once, where a read waited in the system for a writer and no Ctrl-C or kill reached it; a fonts.json that is one is passed over", { skip: process.platform === "win32" && "needs mkfifo" }, () => {
@@ -453,7 +495,7 @@ test("an --out that holds what the run reads, or files by the kit's names it did
   // A words.json this kit wrote can be fixed by hand and read back in place.
   const fix = earlierRun("fix-a-word", ["words.json", "captions.srt"]);
   const again = run([__filename, "--words", path.join(fix, "words.json"), "--out", fix], noChrome);
-  assert.match(again.stderr, /CHROME_PATH is .*, and there is no file there/, "the folder check let it through");
+  assert.match(again.stderr, /CHROME_PATH points to .*, where there is none/, "the folder check let it through");
   const subs = run(["subtitles", path.join(fix, "words.json"), "--out", fix]);
   assert.equal(subs.status, 0, subs.stderr);
   assert.match(fs.readFileSync(path.join(fix, "captions.srt"), "utf8"), /fixed by hand/);
@@ -774,7 +816,8 @@ test("a video that states no length, as a browser's recording, is as long as its
   assert.ok(short.cues.at(-1).end <= short.video.duration);
   // The whole file says nothing of its length.
   assert.ok(!subtitles(whole, "whole-length").notes.some((n) => /length|frames end/.test(n)));
-  // As ffprobe reads files of these shapes: what it says of the streams, and the times of their packets.
+  // As ffprobe reads files of these shapes: what it says of the streams, and the times of their packets, and its version,
+  // which a run asks before any work.
   if (process.platform !== "win32") {
     const probed = (name, { streams, format, packets }) => {
       const at = path.join(dir, "probe-as", name);
@@ -782,7 +825,7 @@ test("a video that states no length, as a browser's recording, is as long as its
       fs.writeFileSync(path.join(at, "probe.json"), JSON.stringify({ streams, format }));
       fs.writeFileSync(path.join(at, "packets.csv"), packets.map((p) => p.join(",")).join("\n") + "\n");
       const fake = path.join(at, "ffprobe");
-      fs.writeFileSync(fake, `#!/bin/sh\nfor a in "$@"; do\n  case "$a" in\n    -show_format) cat "${at}/probe.json"; exit 0 ;;\n    -show_entries) cat "${at}/packets.csv"; exit 0 ;;\n  esac\ndone\nexit 0\n`, { mode: 0o755 });
+      fs.writeFileSync(fake, `#!/bin/sh\nfor a in "$@"; do\n  case "$a" in\n    -version) echo "ffprobe version 8.0, a stand-in"; exit 0 ;;\n    -show_format) cat "${at}/probe.json"; exit 0 ;;\n    -show_entries) cat "${at}/packets.csv"; exit 0 ;;\n  esac\ndone\nexit 0\n`, { mode: 0o755 });
       return fake;
     };
     // As ffprobe writes packet=stream_index,pts_time,dts_time,duration_time,flags.
@@ -818,7 +861,7 @@ test("a video that states no length, as a browser's recording, is as long as its
     const packets = 'BEGIN { n = 0; for (i = 0; i < 1080000; i++) { t = sprintf("%.6f", i / 30); print "0," t "," t ",0.033333," (i % 300 ? "___" : "K__"); for (; n * 1024 / 48000 < (i + 1) / 30; n++) { a = sprintf("%.6f", n * 1024 / 48000); print "1," a "," a ",0.021333,K__"; print "2," a "," a ",0.021333,K__" } } }';
     fs.writeFileSync(path.join(ten, "packets.awk"), packets);
     const tenProbe = path.join(ten, "ffprobe");
-    fs.writeFileSync(tenProbe, `#!/bin/sh\nfor a in "$@"; do\n  case "$a" in\n    -show_format) cat "${ten}/probe.json"; exit 0 ;;\n    -show_entries) exec awk -f "${ten}/packets.awk" ;;\n  esac\ndone\nexit 0\n`, { mode: 0o755 });
+    fs.writeFileSync(tenProbe, `#!/bin/sh\nfor a in "$@"; do\n  case "$a" in\n    -version) echo "ffprobe version 8.0, a stand-in"; exit 0 ;;\n    -show_format) cat "${ten}/probe.json"; exit 0 ;;\n    -show_entries) exec awk -f "${ten}/packets.awk" ;;\n  esac\ndone\nexit 0\n`, { mode: 0o755 });
     const long = run(["subtitles", longWords, "--video", live, "--style", "line", "--out", path.join(dir, "ten-hours"), "--json"], { env: { ...process.env, FFPROBE_PATH: tenProbe, NODE_OPTIONS: "--max-old-space-size=128" } });
     assert.equal(long.status, 0, long.stderr.slice(-400));
     const tenJson = JSON.parse(long.stdout);
@@ -833,7 +876,7 @@ test("a video that states no length, as a browser's recording, is as long as its
   if (process.platform !== "win32") {
     const fake = path.join(dir, "probe-nothing", "ffprobe");
     fs.mkdirSync(path.dirname(fake), { recursive: true });
-    fs.writeFileSync(fake, `#!/bin/sh\nfor a in "$@"; do\n  case "$a" in\n    -show_format) echo '{"streams":[{"index":0,"codec_type":"video","codec_name":"vp8","width":320,"height":568,"r_frame_rate":"30/1","avg_frame_rate":"30/1","time_base":"1/1000"}],"format":{"format_name":"matroska,webm","start_time":"0.000000"}}'; exit 0 ;;\n  esac\ndone\nexit 0\n`, { mode: 0o755 });
+    fs.writeFileSync(fake, `#!/bin/sh\nfor a in "$@"; do\n  case "$a" in\n    -version) echo "ffprobe version 8.0, a stand-in"; exit 0 ;;\n    -show_format) echo '{"streams":[{"index":0,"codec_type":"video","codec_name":"vp8","width":320,"height":568,"r_frame_rate":"30/1","avg_frame_rate":"30/1","time_base":"1/1000"}],"format":{"format_name":"matroska,webm","start_time":"0.000000"}}'; exit 0 ;;\n  esac\ndone\nexit 0\n`, { mode: 0o755 });
     const r = run(["subtitles", words, "--video", live, "--out", path.join(dir, "no-times")], { env: { ...process.env, FFPROBE_PATH: fake } });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /^easycaptionkit: Cannot read .*no-length\.mkv: it states no length, and ffprobe found no times for its frames\. Write it again with them, as ffmpeg -i <file> -c copy <new file> does, and caption that\n$/);
