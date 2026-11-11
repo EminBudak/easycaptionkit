@@ -53,6 +53,19 @@ test("what a program did when it did not answer: its first line and how it ended
   assert.equal(programs.happened({ late: true }, 500), "it gave no answer in 0.5 s");
 });
 
+test("what the system said of a file it did not start is told without waiting on a named pipe in the file's place", { skip: !posix && "needs mkfifo" }, () => {
+  const fifo = path.join(dir, "fifo-in-place", "ffmpeg");
+  fs.mkdirSync(path.dirname(fifo), { recursive: true });
+  assert.equal(spawnSync("mkfifo", ["-m", "755", fifo]).status, 0);
+  // A read that waits for a writer ends by no signal the process takes, so the check runs in a process of its own,
+  // killed once the time is up.
+  const err = `Object.assign(new Error("spawn EACCES"), { code: "EACCES", errno: ${-require("node:os").constants.errno.EACCES} })`;
+  const script = `process.stdout.write(require(${JSON.stringify(require.resolve("../skills/easycaptionkit/scripts/lib/programs"))}).unstartable(${JSON.stringify(fifo)}, ${err}))`;
+  const r = spawnSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 20_000, killSignal: "SIGKILL" });
+  assert.equal(r.signal, null, "the read waited for a writer");
+  assert.equal(r.stdout, "the system could not start it: permission denied");
+});
+
 // A folder of the stand-ins of a case, with a file in it for each program, from what `body` gives for its name.
 function cases(root) {
   const at = (...names) => path.join(root, ...names);
@@ -199,10 +212,13 @@ test("an ffmpeg, ffprobe or Chrome that cannot be started or does not answer as 
   put("failing", "#!/bin/sh\necho 'something went wrong' >&2\nexit 3\n");
   put("crashing", "#!/bin/sh\nkill -SEGV $$\n");
   put("killed", "#!/bin/sh\nkill -KILL $$\n");
+  // A named pipe with the permission to run it, which the system does not run, and whose first line a read waits for.
+  fs.mkdirSync(at("fifo"), { recursive: true });
+  for (const role of ROLES) assert.equal(spawnSync("mkfifo", ["-m", "755", at("fifo", role)]).status, 0);
   // Each program named by its variable: ffmpeg in a run that burns captions with libass, ffprobe in that run and in a
   // subtitles run, which uses ffprobe alone, and Chrome in a run that draws with it. `env` is more of the
-  // environment, as a PATH.
-  const named = (file, what, env = {}) => {
+  // environment, as a PATH, and `options` how each run is started.
+  const named = (file, what, env = {}, options = {}) => {
     const value = (role) => (typeof file === "function" ? file(role) : file);
     const expect = (role) => {
       const words = what(value(role), role);
@@ -210,9 +226,9 @@ test("an ffmpeg, ffprobe or Chrome that cannot be started or does not answer as 
       const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return new RegExp(`^${escape(pointed(role, value(role), "\0")).replace("\0", words.source)}$`);
     };
-    refused({ ...env, FFMPEG_PATH: value("ffmpeg"), FFPROBE_PATH: found.ffprobe }, [clip, "--words", words, "--libass"], expect("ffmpeg"));
-    for (const args of [[clip, "--words", words, "--libass"], ["subtitles", words, "--video", clip]]) refused({ ...env, FFPROBE_PATH: value("ffprobe") }, args, expect("ffprobe"));
-    refused({ ...env, CHROME_PATH: value("chrome") }, [clip, "--words", words], expect("chrome"));
+    refused({ ...env, FFMPEG_PATH: value("ffmpeg"), FFPROBE_PATH: found.ffprobe }, [clip, "--words", words, "--libass"], expect("ffmpeg"), options);
+    for (const args of [[clip, "--words", words, "--libass"], ["subtitles", words, "--video", clip]]) refused({ ...env, FFPROBE_PATH: value("ffprobe") }, args, expect("ffprobe"), options);
+    refused({ ...env, CHROME_PATH: value("chrome") }, [clip, "--words", words], expect("chrome"), options);
   };
   const list = [
     ["nothing at the path", "nothing", () => "where there is none"],
@@ -251,6 +267,10 @@ test("an ffmpeg, ffprobe or Chrome that cannot be started or does not answer as 
     ["a program the system stops with SIGKILL when asked its version", "killed", (file, role) => `did not run as ${NAME[role]}: it was stopped by SIGKILL`],
   ];
   for (const [title, folder, what, skip] of list) await t.test(title, { skip }, () => named((role) => at(folder, role), what));
+  // A run that waits on the pipe ends neither by SIGINT nor by SIGTERM, so it is killed once a minute has passed.
+  await t.test("a named pipe with the permission to run it", () => {
+    named((role) => at("fifo", role), () => "is a named pipe", {}, { spawn: (args, options) => run(args, { ...options, timeout: 60_000, killSignal: "SIGKILL" }) });
+  });
   await t.test("a script whose #! line has env start a program that is a folder on PATH", () => {
     const PATH = `${at("env-path")}${path.delimiter}${base.PATH}`;
     named((role) => at("env-folder", role), (file, role) => printed(file, role, { ...base, PATH }), { PATH });

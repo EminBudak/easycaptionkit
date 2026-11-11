@@ -93,8 +93,9 @@ function fileOnTheWay(file) {
 // What keeps the system from running the file at a path, as far as can be
 // told for certain before it runs: null when nothing does, else the words
 // for it, and in `on` what the system does with such a file as it looks
-// for a program on PATH. It "passes" over a folder, a link to nothing and
-// a file this user may not run, to look in the next folder, and these are
+// for a program on PATH. It "passes" over a folder, a named pipe, a
+// socket and a device, none of which it runs, a link to nothing and a
+// file this user may not run, to look in the next folder, and these are
 // named when no program comes after them; it passes over nothing there
 // and a folder this user may not enter "quietly", as these may hold no
 // such program at all; and it "stops" at a path it cannot follow, as a
@@ -121,6 +122,7 @@ function barred(file) {
   }
   if (stat.isDirectory()) return { on: "passes", words: "is a folder" };
   if (WINDOWS) return null;
+  if (!stat.isFile()) return { on: "passes", words: stat.isFIFO() ? "is a named pipe" : stat.isSocket() ? "is a socket" : "is a device" };
   try {
     fs.accessSync(file, fs.constants.X_OK);
   } catch {
@@ -219,11 +221,14 @@ function happened(r, limit) {
 }
 
 // The first line of a file that starts with #!, which names the program
-// the system starts the file with, or null.
+// the system starts the file with, or null. It is opened without waiting,
+// as a named pipe put in the file's place since it was looked at would
+// wait for a writer for good, and read only when it is a file.
 function bangLine(file) {
   let fd;
   try {
-    fd = fs.openSync(file, "r");
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+    if (!fs.fstatSync(fd).isFile()) return null;
     const bytes = Buffer.alloc(256);
     const got = bytes.subarray(0, fs.readSync(fd, bytes, 0, bytes.length, 0));
     if (got.indexOf("#!") !== 0) return null;
@@ -419,4 +424,4 @@ async function probe(spec, place, args, what, limit = LIMIT) {
   throw unusable(spec, place, `failed when asked ${what} (${asked}): ${r.err ? unstartable(place.file, r.err) : happened(r, limit)}`);
 }
 
-module.exports = { exe, enterable, onPath, quoted, happened, find, locate, probe, startFailure, LIMIT };
+module.exports = { exe, enterable, onPath, quoted, happened, unstartable, find, locate, probe, startFailure, LIMIT };
