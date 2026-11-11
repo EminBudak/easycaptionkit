@@ -21,8 +21,24 @@ const exe = (name) => (WINDOWS ? `${name}.exe` : name);
 // A name with no folder in it, which is looked up on PATH.
 const bare = (value) => !(value.includes("/") || (WINDOWS && value.includes("\\")));
 
+// The errors a start can fail with that libuv has no name for, and Node
+// calls "Unknown system error -86": each one's name and the system's
+// words, by system and number. Linux's numbers are those of every
+// processor Node.js runs on but MIPS.
+const UNNAMED = {
+  linux: { 80: ["ELIBBAD", "accessing a corrupted shared library"], 116: ["ESTALE", "stale file handle"] },
+  darwin: { 70: ["ESTALE", "stale NFS file handle"], 85: ["EBADEXEC", "bad executable (or shared library)"], 86: ["EBADARCH", "bad CPU type in executable"], 87: ["ESHLIBVERS", "shared library version mismatch"], 88: ["EBADMACHO", "malformed Mach-o file"] },
+};
+
+// An error's name and the system's words for it, as ["EACCES",
+// "permission denied"], or [] when neither is known.
+const known = (err) => getSystemErrorMap().get(err.errno) || (!/^mips/.test(process.arch) && (UNNAMED[process.platform] || {})[-err.errno]) || [];
+
+// The system's name for an error, as EACCES, else Node's.
+const codeOf = (err) => known(err)[0] || err.code;
+
 // The system's words for an error, as "permission denied", else its code.
-const worded = (err) => (getSystemErrorMap().get(err.errno) || [])[1] || err.code || String(err.message || err);
+const worded = (err) => known(err)[1] || err.code || String(err.message || err);
 
 // How long a program may take to answer, in milliseconds: on a machine
 // short of memory, with its swap full, ffmpeg 4.4 took more than 30
@@ -246,10 +262,10 @@ function bangLine(file) {
 // interpreter or a loader the file needs is not, so a script's first
 // line, which names its interpreter, is shown with it.
 function unstartable(file, err) {
-  if (["ENOEXEC", "EFTYPE", "EBADARCH"].includes(err.code)) return "it is not a program this system can run";
+  if (["ENOEXEC", "EFTYPE", "EBADARCH", "EBADMACHO"].includes(codeOf(err))) return "it is not a program this system can run";
   const line = bangLine(file);
   const first = line === null ? "" : `; its first line is ${quoted(line)}`;
-  if (err.code === "ENOENT") return `the system could not start it, as an interpreter or a loader it needs is not there${first}`;
+  if (codeOf(err) === "ENOENT") return `the system could not start it, as an interpreter or a loader it needs is not there${first}`;
   return `the system could not start it: ${worded(err)}${first}`;
 }
 
@@ -335,7 +351,7 @@ async function walk(spec, places, limit, { alone = false } = {}) {
       if (answered(spec, r)) return { found: place, stdout: r.stdout };
       // A file taken away or changed since it was looked at is said to be
       // what it is now.
-      if (r.err) seen = barred(place.file) || { on: PASSED.has(r.err.code) ? "passes" : "stops", words: `did not run as ${spec.name}: ${unstartable(place.file, r.err)}` };
+      if (r.err) seen = barred(place.file) || { on: PASSED.has(codeOf(r.err)) ? "passes" : "stops", words: `did not run as ${spec.name}: ${unstartable(place.file, r.err)}` };
       else seen = { on: "stops", words: `did not run as ${spec.name}: ${happened(r, limit)}` };
     }
     if (alone || seen.on === "stops") throw unusable(spec, place, seen.words);

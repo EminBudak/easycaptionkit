@@ -66,6 +66,31 @@ test("what the system said of a file it did not start is told without waiting on
   assert.equal(r.stdout, "the system could not start it: permission denied");
 });
 
+test("a start error Node.js has no name for is told in the system's words, and a program for another processor on macOS is said to be one this system cannot run", () => {
+  const { getSystemErrorName } = require("node:util");
+  // The error Node.js gives for a start that failed with the system's error number `n`.
+  const failed = (n, file = "/opt/ff/ffmpeg") => Object.assign(new Error(`spawn ${file} ${getSystemErrorName(-n)}`), { errno: -n, code: getSystemErrorName(-n), syscall: `spawn ${file}`, path: file });
+  assert.equal(failed(86).code, "Unknown system error -86");
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const on = (system, check) => {
+    Object.defineProperty(process, "platform", { ...platform, value: system });
+    try {
+      check();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  };
+  on("linux", () => {
+    assert.equal(programs.unstartable("/opt/ff/ffmpeg", failed(80)), "the system could not start it: accessing a corrupted shared library");
+    assert.equal(programs.startFailure("/opt/ff/ffmpeg", failed(80)).message, "easycaptionkit could not start ffmpeg (/opt/ff/ffmpeg): accessing a corrupted shared library.");
+  });
+  on("darwin", () => {
+    assert.equal(programs.unstartable("/opt/ff/ffmpeg", failed(86)), "it is not a program this system can run");
+    assert.equal(programs.unstartable("/opt/ff/ffmpeg", failed(85)), "the system could not start it: bad executable (or shared library)");
+    assert.equal(programs.startFailure("/opt/ff/ffmpeg", failed(86)).message, "easycaptionkit could not start ffmpeg (/opt/ff/ffmpeg): bad CPU type in executable.");
+  });
+});
+
 // A folder of the stand-ins of a case, with a file in it for each program, from what `body` gives for its name.
 function cases(root) {
   const at = (...names) => path.join(root, ...names);
@@ -152,6 +177,9 @@ test("an ffmpeg, ffprobe or Chrome that cannot be started or does not answer as 
     put("libmiss", (role) => swap(bytes[role], library(role), library(role).replace("libavdevice", "libavdevicX")));
     put("noloader", (role) => swap(bytes[role], loader(role), gone(loader(role))));
   }
+  // A loader that is a script, which the system takes for a corrupted shared library: ldd, glibc's script.
+  const script = fs.existsSync("/usr/bin/ldd") && fs.readFileSync("/usr/bin/ldd").subarray(0, 2).toString("latin1") === "#!" ? "/usr/bin/ldd" : "";
+  if (linked && script) put("scriptloader", (role) => swap(bytes[role], loader(role), script.padEnd(loader(role).length, "\0")));
   if (glibc) put("newer", (role) => swap(bytes[role], glibc, "GLIBC_2.99"));
   // The other processor, by the number ELF gives it.
   const other = { x64: 183, arm64: 62 }[process.arch];
@@ -251,6 +279,7 @@ test("an ffmpeg, ffprobe or Chrome that cannot be started or does not answer as 
     ["a script whose interpreter may not be run", "locked-interpreter", (file, role) => refusedStart(role, `#!${path.join(plain, "readme.txt")}`), unspaced],
     ["a script whose #! line has env start a program that is not on PATH", "env-missing", printed],
     ["a program whose loader the machine lacks", "noloader", (file, role) => lacking(role, null), !linked && "the system's ffmpeg names no loader"],
+    ["a program whose loader is a script", "scriptloader", (file, role) => `did not run as ${NAME[role]}: the system could not start it: accessing a corrupted shared library`, (!linked && "the system's ffmpeg names no loader") || (!script && "needs ldd as a script")],
     ["a program that needs a shared library the machine lacks", "libmiss", printed, !linked && "the system's ffmpeg is not linked to libavdevice"],
     ["a program made for a newer glibc than the machine's", "newer", printed, !glibc && "the system's ffmpeg asks for no GLIBC_2.34 or GLIBC_2.29"],
     ["the loader's words for a library it did not find, from a script", "libsay", printed],
