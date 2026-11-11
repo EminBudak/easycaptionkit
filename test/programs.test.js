@@ -82,12 +82,12 @@ test("a start error Node.js has no name for is told in the system's words, and a
   };
   on("linux", () => {
     assert.equal(programs.unstartable("/opt/ff/ffmpeg", failed(80)), "the system could not start it: accessing a corrupted shared library");
-    assert.equal(programs.startFailure("/opt/ff/ffmpeg", failed(80)).message, "easycaptionkit could not start ffmpeg (/opt/ff/ffmpeg): accessing a corrupted shared library.");
+    assert.equal(programs.startFailure("/opt/ff/ffmpeg", failed(80)).message, "easycaptionkit could not start ffmpeg, /opt/ff/ffmpeg, again: accessing a corrupted shared library. Check that it is still there and may be run, and run easycaptionkit again.");
   });
   on("darwin", () => {
     assert.equal(programs.unstartable("/opt/ff/ffmpeg", failed(86)), "it is not a program this system can run");
     assert.equal(programs.unstartable("/opt/ff/ffmpeg", failed(85)), "the system could not start it: bad executable (or shared library)");
-    assert.equal(programs.startFailure("/opt/ff/ffmpeg", failed(86)).message, "easycaptionkit could not start ffmpeg (/opt/ff/ffmpeg): bad CPU type in executable.");
+    assert.equal(programs.startFailure("/opt/ff/ffmpeg", failed(86)).message, "easycaptionkit could not start ffmpeg, /opt/ff/ffmpeg, again: bad CPU type in executable. Check that it is still there and may be run, and run easycaptionkit again.");
   });
 });
 
@@ -547,17 +547,29 @@ test("an ffmpeg that answers its version and then fails or is stopped when asked
   refused(env(noH264), [clip, "--words", words, "--libass"], "This ffmpeg has no H.264 encoder (libx264, VideoToolbox, OpenH264 or Media Foundation), so it cannot write the captioned MP4");
 });
 
-test("a program a run checked that the system cannot start during the work says what the system said or is short of, and one started in a work folder that is gone says so", { skip: (!hasFfmpeg && "needs ffmpeg") || (!posix && "needs a shell's ffmpeg") }, async () => {
+test("a program a run checked that the system cannot start during the work says what the system is short of, or what it said and what to check, and one started in a work folder that is gone says so", { skip: (!hasFfmpeg && "needs ffmpeg") || (!posix && "needs a shell's ffmpeg") }, async () => {
   const ffmpeg = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
   const failure = (code, file = "/opt/ffmpeg/ffprobe") => programs.startFailure(file, Object.assign(new Error(`spawn ${file} ${code}`), { code, errno: -require("node:os").constants.errno[code], syscall: `spawn ${file}` })).message;
   assert.equal(failure("EMFILE"), "easycaptionkit could not start ffprobe: too many open files. Raise the limit on open files (ulimit -n) and run it again.");
   assert.equal(failure("ENFILE"), "easycaptionkit could not start ffprobe: the system has too many files open. Run it again once fewer are.");
   assert.equal(failure("EAGAIN"), "easycaptionkit could not start ffprobe: the system starts no more processes for now. Run it again once fewer are running.");
   assert.equal(failure("ENOMEM"), "easycaptionkit could not start ffprobe: not enough memory. Free some and run it again.");
-  assert.equal(failure("ENOENT"), "easycaptionkit could not start ffprobe (/opt/ffmpeg/ffprobe): no such file or directory.");
-  assert.equal(failure("EACCES"), "easycaptionkit could not start ffprobe (/opt/ffmpeg/ffprobe): permission denied.");
+  const again = (words) => `easycaptionkit could not start ffprobe, /opt/ffmpeg/ffprobe, again: ${words}. Check that it is still there and may be run, and run easycaptionkit again.`;
+  assert.equal(failure("ENOENT"), again("no such file or directory"));
+  assert.equal(failure("EACCES"), again("permission denied"));
   const gone = path.join(dir, "gone-work-folder");
   const file = real("ffmpeg");
   await assert.rejects(ffmpeg.run(file, ["-version"], { cwd: gone }), { message: `${path.basename(file)} could not be started in ${gone}, a folder that is not there any more or may not be entered` });
-  await assert.rejects(ffmpeg.run(path.join(dir, "no-such-ffmpeg"), ["-version"]), { message: `easycaptionkit could not start no-such-ffmpeg (${path.join(dir, "no-such-ffmpeg")}): no such file or directory.` });
+  await assert.rejects(ffmpeg.run(path.join(dir, "no-such-ffmpeg"), ["-version"]), { message: `easycaptionkit could not start no-such-ffmpeg, ${path.join(dir, "no-such-ffmpeg")}, again: no such file or directory. Check that it is still there and may be run, and run easycaptionkit again.` });
+  // An ffmpeg that answers when the run begins and may not be run once libass has been asked how it draws colors, so
+  // the encode cannot start it.
+  if (!/ ass /.test(spawnSync(file, ["-hide_banner", "-filters"], { encoding: "utf8" }).stdout)) return;
+  const root = path.join(dir, "started-again");
+  const refused = refuser(root);
+  const lost = path.join(root, "lost", "ffmpeg");
+  fs.mkdirSync(path.dirname(lost), { recursive: true });
+  fs.writeFileSync(lost, `#!/bin/sh\ncase " $* " in *" ass=filename=matrix.ass "*) ${JSON.stringify(file)} "$@"; s=$?; chmod 644 "$0"; exit $s;; esac\nexec ${JSON.stringify(file)} "$@"\n`, { mode: 0o755 });
+  const clip = video({ width: 320, height: 240, seconds: 1, sound: "none" });
+  const words = write("started-again-words.json", { words: evenWords("one two three", { start: 0.1, each: 0.2, gap: 0.05 }) });
+  refused({ FFMPEG_PATH: lost, FFPROBE_PATH: real("ffprobe") }, [clip, "--words", words, "--libass"], `easycaptionkit could not start ffmpeg, ${lost}, again: permission denied. Check that it is still there and may be run, and run easycaptionkit again.`);
 });

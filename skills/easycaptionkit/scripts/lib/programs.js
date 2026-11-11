@@ -290,10 +290,12 @@ const short = (name, err) => Object.assign(new Error(`easycaptionkit could not s
 
 // The error for a program a run checked before any work that the system
 // did not start during the work, `name` being what messages call it: what
-// the system is short of, or its words, never its code alone.
+// the system is short of, else the system's words, never its code alone,
+// and what to check, as a program that answered when the run began can
+// have been taken away or changed since.
 function startFailure(file, err, name = path.basename(file)) {
   if (Object.hasOwn(SHORT, err.code)) return short(name, err);
-  return new Error(`easycaptionkit could not start ${name} (${file}): ${worded(err)}.`);
+  return new Error(`easycaptionkit could not start ${name}, ${file}, again: ${worded(err)}. Check that it is still there and may be run, and run easycaptionkit again.`);
 }
 
 // ─── finding a program and asking it ──────────────────────────────────────
