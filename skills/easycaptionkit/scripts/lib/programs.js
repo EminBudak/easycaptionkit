@@ -4,9 +4,10 @@
 // is, and whether it starts and answers as itself, asked before any work.
 // Of one that does not, a run says only what is certain: what is at its
 // path, as a folder or a file this user may not run, else what the system
-// said when it could not start it, or the first line the program printed
-// and how it ended. That line is the program's own, and says in its words
-// what is at fault: nothing here guesses which file of a chain it is.
+// said when it could not start it, the first line the program printed and
+// how it ended, or that it gave no answer in time. That line is the
+// program's own, and says in its words what is at fault: nothing here
+// guesses which file of a chain it is.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -151,8 +152,8 @@ function barred(file) {
 
 // What `file` did when run with `args`, given `limit` milliseconds: { code,
 // signal, stdout, stderr }, { late: true } when it gave no answer in that
-// time and was stopped, or { err } when the system did not start it. What
-// it printed is kept up to `cap` bytes.
+// time and was stopped (see late()), or { err } when the system did not
+// start it. What it printed is kept up to `cap` bytes.
 function ask(file, args, { limit = LIMIT, cap = 1 << 20 } = {}) {
   return new Promise((resolve) => {
     let child;
@@ -226,8 +227,7 @@ const firstLine = (text) =>
 // its output, and how it ended. ffmpeg, ffprobe and Chrome give their
 // versions on their output, so a program that ended well and printed on
 // its error output alone is said to.
-function happened(r, limit) {
-  if (r.late) return `it gave no answer in ${limit / 1000} s`;
+function happened(r) {
   const line = firstLine(r.stderr);
   if (line && r.code === 0 && !firstLine(r.stdout)) return `it printed ${quoted(line)} on its error output, nothing on its output, and exited with 0`;
   const ended = r.signal ? `was stopped by ${r.signal}` : `exited with ${r.code}`;
@@ -288,6 +288,15 @@ const PASSED = new Set(["ENOENT", "EACCES", "ENOTDIR", "ESTALE", "ENODEV", "ETIM
 // it is short of, as open files: no fault of the program's.
 const short = (name, err) => Object.assign(new Error(`easycaptionkit could not start ${name}: ${SHORT[err.code]}.`), { unusable: true, why: `the system could not start ${name}: ${SHORT[err.code].replace(/\. .*$/, "")}` });
 
+// The error for a program that gave no answer in `limit` ms when asked
+// `what`, as "its version": ffmpeg on a machine short of memory can be
+// that slow as well as a program that is not ffmpeg, so only that is said,
+// and to run again, with no advice to install another.
+function late(spec, place, what, limit) {
+  const words = `gave no answer in ${limit / 1000} s when asked ${what}`;
+  return Object.assign(new Error(`easycaptionkit could not check ${spec.name}, ${place.file}: it ${words}, as on a machine short of memory. ${spec.advice.late}`), { unusable: true, why: placed(place, words) });
+}
+
 // The error for a program a run checked before any work that the system
 // did not start during the work, `name` being what messages call it: what
 // the system is short of, else the system's words, never its code alone,
@@ -313,8 +322,8 @@ function startFailure(file, err, name = path.basename(file)) {
 // nothing is in the way of running it, as Chrome on Windows, which prints
 // no version. `none` is the message when there is none, and `advice` the
 // sentence that ends one about a program the run cannot use: `variable`
-// for one the variable names, `next` for ffprobe next to ffmpeg, and
-// `found` for the others.
+// for one the variable names, `next` for ffprobe next to ffmpeg, `found`
+// for the others, and `late` for one that gave no answer in time.
 
 // Where a run found a program, in words that name its place and say what
 // happened there.
@@ -350,11 +359,12 @@ async function walk(spec, places, limit, { alone = false } = {}) {
       if (spec.ask === false) return { found: place, stdout: "" };
       const r = await ask(place.file, spec.args, { limit, cap: 1 << 16 });
       if (r.err && Object.hasOwn(SHORT, r.err.code)) throw short(spec.name, r.err);
+      if (r.late) throw late(spec, place, "its version", limit);
       if (answered(spec, r)) return { found: place, stdout: r.stdout };
       // A file taken away or changed since it was looked at is said to be
       // what it is now.
       if (r.err) seen = barred(place.file) || { on: PASSED.has(codeOf(r.err)) ? "passes" : "stops", words: `did not run as ${spec.name}: ${unstartable(place.file, r.err)}` };
-      else seen = { on: "stops", words: `did not run as ${spec.name}: ${happened(r, limit)}` };
+      else seen = { on: "stops", words: `did not run as ${spec.name}: ${happened(r)}` };
     }
     if (alone || seen.on === "stops") throw unusable(spec, place, seen.words);
     if (seen.on === "passes" && !passed) passed = { place, words: seen.words };
@@ -433,13 +443,15 @@ function locate(spec) {
 // answered its version, as asked about `what` ("its encoders"): its
 // output, read only once it ended well. One that fails or is stopped
 // stops the run with how it ended, so a program that cannot answer is not
-// taken for one without the encoder or the filter asked for.
+// taken for one without the encoder or the filter asked for, and one that
+// gives no answer in time stops it as late() says.
 async function probe(spec, place, args, what, limit = LIMIT) {
   const r = await ask(place.file, args, { limit });
-  if (r.err && Object.hasOwn(SHORT, r.err.code)) throw short(spec.name, r.err);
-  if (!r.err && !r.late && r.code === 0 && !r.signal) return r.stdout;
   const asked = args.filter((arg) => arg !== "-hide_banner").join(" ");
-  throw unusable(spec, place, `failed when asked ${what} (${asked}): ${r.err ? unstartable(place.file, r.err) : happened(r, limit)}`);
+  if (r.err && Object.hasOwn(SHORT, r.err.code)) throw short(spec.name, r.err);
+  if (r.late) throw late(spec, place, `${what} (${asked})`, limit);
+  if (!r.err && r.code === 0 && !r.signal) return r.stdout;
+  throw unusable(spec, place, `failed when asked ${what} (${asked}): ${r.err ? unstartable(place.file, r.err) : happened(r)}`);
 }
 
 module.exports = { exe, enterable, onPath, quoted, happened, unstartable, find, locate, probe, startFailure, LIMIT };

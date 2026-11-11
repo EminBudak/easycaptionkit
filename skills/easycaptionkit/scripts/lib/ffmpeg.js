@@ -29,6 +29,7 @@ const FFMPEG = {
   advice: {
     variable: `Set FFMPEG_PATH to an ffmpeg that runs, or unset it and install one (${INSTALL}).`,
     found: `Install ffmpeg (${INSTALL}) or set FFMPEG_PATH to an ffmpeg that runs.`,
+    late: "Run easycaptionkit again.",
   },
 };
 
@@ -48,6 +49,7 @@ const FFPROBE = (ffmpeg) => ({
     variable: `Set FFPROBE_PATH to an ffprobe that runs, or unset it and install ffmpeg, which comes with ffprobe (${INSTALL}).`,
     next: "Set FFPROBE_PATH to an ffprobe that runs.",
     found: `Install ffmpeg, which comes with ffprobe (${INSTALL}), or set FFPROBE_PATH to an ffprobe that runs.`,
+    late: "Run easycaptionkit again.",
   },
 });
 

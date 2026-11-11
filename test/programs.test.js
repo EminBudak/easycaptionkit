@@ -42,15 +42,14 @@ test("a line a program printed is quoted as it is, its control characters writte
   assert.equal(programs.quoted("x".repeat(200)), `"${"x".repeat(200)}"`);
 });
 
-test("what a program did when it did not answer: its first line and how it ended, on its error output first, or that it printed nothing, was stopped or gave no answer", () => {
-  const said = (r) => programs.happened({ code: 0, signal: null, stdout: "", stderr: "", ...r }, 120_000);
+test("what a program did when it did not answer: its first line and how it ended, on its error output first, or that it printed nothing or was stopped", () => {
+  const said = (r) => programs.happened({ code: 0, signal: null, stdout: "", stderr: "", ...r });
   assert.equal(said({}), "it printed nothing and exited with 0");
   assert.equal(said({ code: 3, stderr: "\n  \nsomething went wrong\nmore\n", stdout: "an answer\n" }), 'it printed "something went wrong" and exited with 3');
   assert.equal(said({ code: 2, stdout: "\nusage: tool\n" }), 'it printed "usage: tool" and exited with 2');
   assert.equal(said({ stderr: "ffmpeg version 9.9\n" }), 'it printed "ffmpeg version 9.9" on its error output, nothing on its output, and exited with 0');
   assert.equal(said({ code: null, signal: "SIGKILL" }), "it was stopped by SIGKILL");
   assert.equal(said({ code: null, signal: "SIGTERM", stderr: "dyld[4321]: Library not loaded\n" }), 'it printed "dyld[4321]: Library not loaded" and was stopped by SIGTERM');
-  assert.equal(programs.happened({ late: true }, 500), "it gave no answer in 0.5 s");
 });
 
 test("what the system said of a file it did not start is told without waiting on a named pipe in the file's place", { skip: !posix && "needs mkfifo" }, () => {
@@ -401,20 +400,36 @@ test("with no program by its names on PATH or where package managers put it, a r
   }
 });
 
-test("an ffmpeg or a Chrome that gives no answer when asked its version is stopped once the time is up and named with its place", { skip: !posix && "the stand-ins are shell scripts" }, async () => {
+test("an ffmpeg, ffprobe or Chrome that gives no answer in time when asked its version, or ffmpeg when asked its encoders, is stopped once the time is up, and the run stops saying only that, with no advice to install one", { skip: !posix && "the stand-ins are shell scripts" }, async () => {
   const ffmpeg = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
   const { chromeReady } = require("../skills/easycaptionkit/scripts/lib/chrome");
-  const standIn = path.join(dir, "hangs", "program");
-  fs.mkdirSync(path.dirname(standIn), { recursive: true });
-  fs.writeFileSync(standIn, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
-  const saved = { FFMPEG_PATH: process.env.FFMPEG_PATH, CHROME_PATH: process.env.CHROME_PATH };
+  const late = (name, file, what) => `easycaptionkit could not check ${name}, ${file}: it gave no answer in 0.5 s when asked ${what}, as on a machine short of memory. Run easycaptionkit again.${name === "Chrome" ? ` ${LIBASS}` : ""}`;
+  const standIn = (name, body) => {
+    const file = path.join(dir, "late", name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, body, { mode: 0o755 });
+    return file;
+  };
+  // One that never answers, and, where there is one, an ffmpeg that answers a moment too late, as on a machine short
+  // of memory.
+  const hangs = standIn("hangs", "#!/bin/sh\nexec sleep 30\n");
+  const slow = hasFfmpeg ? standIn("slow-ffmpeg", `#!/bin/sh\nsleep 2\nexec ${JSON.stringify(real("ffmpeg"))} "$@"\n`) : "";
+  const saved = { FFMPEG_PATH: process.env.FFMPEG_PATH, FFPROBE_PATH: process.env.FFPROBE_PATH, CHROME_PATH: process.env.CHROME_PATH };
   try {
-    process.env.FFMPEG_PATH = standIn;
-    process.env.CHROME_PATH = standIn;
     const started = Date.now();
-    await assert.rejects(ffmpeg.ready(500), { message: `easycaptionkit needs ffmpeg, and FFMPEG_PATH points to ${standIn}, which did not run as ffmpeg: it gave no answer in 0.5 s. ${ADVICE.FFMPEG_PATH}` });
-    await assert.rejects(chromeReady(500), { message: `easycaptionkit needs Chrome, and CHROME_PATH points to ${standIn}, which did not run as Chrome: it gave no answer in 0.5 s. ${ADVICE.CHROME_PATH}` });
-    assert.ok(Date.now() - started < 20_000);
+    for (const file of [hangs, slow].filter(Boolean)) {
+      process.env.FFMPEG_PATH = file;
+      await assert.rejects(ffmpeg.ready(500), { message: late("ffmpeg", file, "its version"), unusable: true });
+    }
+    process.env.FFPROBE_PATH = hangs;
+    await assert.rejects(programs.find(ffmpeg.FFPROBE(""), 500), { message: late("ffprobe", hangs, "its version") });
+    process.env.CHROME_PATH = hangs;
+    await assert.rejects(chromeReady(500), { message: late("Chrome", hangs, "its version"), why: `CHROME_PATH points to ${hangs}, which gave no answer in 0.5 s when asked its version` });
+    // An ffmpeg that gives its version and no answer when asked its encoders.
+    const quiet = standIn("quiet-encoders", '#!/bin/sh\ncase " $* " in *" -encoders "*) exec sleep 30;; esac\necho "ffmpeg version 9.9"\n');
+    const place = { file: quiet, variable: "FFMPEG_PATH", value: quiet };
+    await assert.rejects(programs.probe(ffmpeg.FFMPEG, place, ["-hide_banner", "-encoders"], "its encoders", 500), { message: late("ffmpeg", quiet, "its encoders (-encoders)") });
+    assert.ok(Date.now() - started < 30_000, `${Date.now() - started} ms`);
   } finally {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name];

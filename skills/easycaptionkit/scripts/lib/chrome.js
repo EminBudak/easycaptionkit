@@ -51,6 +51,7 @@ const CHROME = {
   advice: {
     variable: `Set CHROME_PATH to a Chrome that runs, or unset it and install Google Chrome or Chromium. ${LIBASS}`,
     found: `Install Google Chrome or Chromium, or set CHROME_PATH to a Chrome that runs. ${LIBASS}`,
+    late: `Run easycaptionkit again. ${LIBASS}`,
   },
 };
 
