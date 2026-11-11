@@ -92,6 +92,24 @@ function onPath(name, { skip = () => false } = {}) {
   return "";
 }
 
+// Whether a file, not a folder, is at a path, as Windows looks for one.
+function there(file) {
+  try {
+    return !fs.statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Whether Windows runs a file by its own name: one whose name has an
+// extension. It runs a name with none only as that name with .com or .exe
+// added, which libuv looks for next to it.
+function runsAsNamed(file) {
+  const name = path.basename(file);
+  const dot = name.indexOf(".");
+  return dot >= 0 && dot < name.length - 1;
+}
+
 // The file a path goes through as if it were a folder, as notes.txt in
 // notes.txt/ffmpeg, or "".
 function fileOnTheWay(file) {
@@ -116,7 +134,9 @@ function fileOnTheWay(file) {
 // named when no program comes after them; it passes over nothing there
 // and a folder this user may not enter "quietly", as these may hold no
 // such program at all; and it "stops" at a path it cannot follow, as a
-// loop of links.
+// loop of links. On Windows, where no permission to run a file is looked
+// at, a file whose name has no extension passes, as Windows does not run
+// it, unless a .com or an .exe by that name is next to it, which it runs.
 function barred(file) {
   let stat;
   try {
@@ -138,7 +158,7 @@ function barred(file) {
     return { on: "stops", words: `cannot be looked at: ${worded(err)}` };
   }
   if (stat.isDirectory()) return { on: "passes", words: "is a folder" };
-  if (WINDOWS) return null;
+  if (WINDOWS) return runsAsNamed(file) || there(`${file}.com`) || there(`${file}.exe`) ? null : { on: "passes", words: "has no .exe in its name, so Windows does not run it" };
   if (!stat.isFile()) return { on: "passes", words: stat.isFIFO() ? "is a named pipe" : stat.isSocket() ? "is a socket" : "is a device" };
   try {
     fs.accessSync(file, fs.constants.X_OK);
@@ -258,14 +278,15 @@ function bangLine(file) {
 }
 
 // What the system said when it did not start a file the checks found
-// nothing wrong with. It says ENOENT of a file that is there when an
-// interpreter or a loader the file needs is not, so a script's first
-// line, which names its interpreter, is shown with it.
+// nothing wrong with. Off Windows it says ENOENT of a file that is there
+// when an interpreter or a loader the file needs is not, so a script's
+// first line, which names its interpreter, is shown with it. Windows runs
+// no interpreter a first line names.
 function unstartable(file, err) {
   if (["ENOEXEC", "EFTYPE", "EBADARCH", "EBADMACHO"].includes(codeOf(err))) return "it is not a program this system can run";
-  const line = bangLine(file);
+  const line = WINDOWS ? null : bangLine(file);
   const first = line === null ? "" : `; its first line is ${quoted(line)}`;
-  if (codeOf(err) === "ENOENT") return `the system could not start it, as an interpreter or a loader it needs is not there${first}`;
+  if (codeOf(err) === "ENOENT" && !WINDOWS) return `the system could not start it, as an interpreter or a loader it needs is not there${first}`;
   return `the system could not start it: ${worded(err)}${first}`;
 }
 

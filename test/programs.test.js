@@ -438,6 +438,41 @@ test("an ffmpeg, ffprobe or Chrome that gives no answer in time when asked its v
   }
 });
 
+test("on Windows a program path whose name has no extension and has no .com or .exe next to it is said to have no .exe in its name, and with an .exe next to it goes ahead", { skip: !posix && "Windows as this system plays it, with stand-ins its shell runs" }, async () => {
+  const { FFMPEG } = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
+  // programs.js as it loads on Windows.
+  const file = require.resolve("../skills/easycaptionkit/scripts/lib/programs");
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const kept = require.cache[file];
+  let windows;
+  try {
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    delete require.cache[file];
+    windows = require(file);
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    require.cache[file] = kept;
+  }
+  const bare = path.join(dir, "windows", "ffmpeg");
+  fs.mkdirSync(path.dirname(bare), { recursive: true });
+  fs.writeFileSync(bare, '#!/bin/sh\necho "ffmpeg version 9.9"\n', { mode: 0o755 });
+  const saved = process.env.FFMPEG_PATH;
+  process.env.FFMPEG_PATH = bare;
+  try {
+    await assert.rejects(windows.find(FFMPEG), { message: `easycaptionkit needs ffmpeg, and FFMPEG_PATH points to ${bare}, which has no .exe in its name, so Windows does not run it. ${ADVICE.FFMPEG_PATH}` });
+    // Windows runs the .exe for that path, which this system's shell plays here by running the file itself.
+    fs.writeFileSync(`${bare}.exe`, "");
+    assert.equal((await windows.find(FFMPEG)).file, bare);
+  } finally {
+    if (saved === undefined) delete process.env.FFMPEG_PATH;
+    else process.env.FFMPEG_PATH = saved;
+  }
+  // Windows runs no interpreter a first line names, so a file it says is not there is not said to lack one.
+  const missing = Object.assign(new Error(`spawn ${bare} ENOENT`), { code: "ENOENT", errno: -require("node:os").constants.errno.ENOENT });
+  assert.equal(windows.unstartable(bare, missing), "the system could not start it: no such file or directory");
+  assert.equal(programs.unstartable(bare, missing), 'the system could not start it, as an interpreter or a loader it needs is not there; its first line is "#!/bin/sh"');
+});
+
 test("on PATH a run takes the ffmpeg the system starts, past a folder, a file it may not run, a link to nothing and a script whose interpreter is missing, and ffprobe next to it", { skip: (!hasFfmpeg && "needs ffmpeg") || (!posix && "the stand-ins are shell scripts") }, async () => {
   const ffmpeg = require("../skills/easycaptionkit/scripts/lib/ffmpeg");
   const root = path.join(dir, "passed-over");
