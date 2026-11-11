@@ -2172,17 +2172,17 @@ test("the encode's progress and a caption drawn smaller say a share under 1 as u
   assert.equal(percentOf(0.51), 51);
 });
 
-test("the workflows run the tests on Ubuntu 22.04's ffmpeg 4.4 and on the latest Ubuntu's, and let Chrome start with its sandbox on 24.04 first", () => {
+test("the workflows run the tests on Ubuntu 22.04's ffmpeg 4.4, on Ubuntu 24.04's 6.1 and on the latest Ubuntu's, and let Chrome start with its sandbox on 24.04 first", () => {
   for (const name of ["test.yml", "publish.yml"]) {
     const text = fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", name), "utf8");
-    assert.match(text, /fail-fast: false\n\s+matrix:\n\s+os: \[ubuntu-latest, ubuntu-22\.04\]\n\s+runs-on: \$\{\{ matrix\.os \}\}/, `${name} runs the tests on one Ubuntu`);
+    assert.match(text, /fail-fast: false\n\s+matrix:\n\s+os: \[ubuntu-latest, ubuntu-24\.04, ubuntu-22\.04\]\n\s+runs-on: \$\{\{ matrix\.os \}\}/, `${name} does not run the tests on each Ubuntu`);
     assert.match(text, /ffmpeg && ffmpeg -version \| head -1/, `${name} does not say which ffmpeg the tests ran on`);
     // 22.04 has no such setting, and sysctl fails on a key it does not have.
     const step = text.indexOf("if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi");
     assert.ok(step > 0, `${name} has no step that lets Chrome start`);
     assert.ok(step < text.indexOf("npm test"), `${name} lets Chrome start only after the tests`);
   }
-  // Nothing is published unless the tests passed on both.
+  // Nothing is published unless the tests passed on all of them.
   assert.match(fs.readFileSync(path.join(__dirname, "..", ".github", "workflows", "publish.yml"), "utf8"), /\n {2}publish:\n {4}needs: test\n/);
 });
 
