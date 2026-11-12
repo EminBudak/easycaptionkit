@@ -6,7 +6,7 @@
     "name": "Emin Budak",
     "url": "https://eminbudak.com"
   },
-  "repository": "https://github.com/EminBudak/easycaptionkit",
+  "repository": "https://github.com/MakersMCP/easycaptionkit",
   "license": "MIT",
   "keywords": ["captions", "subtitles", "video", "srt", "safe-zone"],
   "skills": "./skills/",
@@ -17,7 +17,7 @@
     "developerName": "Emin Budak",
     "category": "Creativity",
     "capabilities": ["Read", "Write"],
-    "websiteUrl": "https://github.com/EminBudak/easycaptionkit",
+    "websiteUrl": "https://github.com/MakersMCP/easycaptionkit",
     "defaultPrompt": ["Caption demo.mp4 for TikTok and Reels from transcript.json"],
     "composerIcon": "./assets/icon.svg",
     "logo": "./assets/icon.svg"

@@ -4,12 +4,12 @@
   "description": "Burn captions into a video in the product's own fonts and colors, word by word or line by line, kept clear of each app's buttons, with the SRT, VTT and ASS files to go with it.",
   "license": "MIT",
   "author": "Emin Budak",
-  "homepage": "https://github.com/EminBudak/easycaptionkit#readme",
+  "homepage": "https://github.com/MakersMCP/easycaptionkit#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/EminBudak/easycaptionkit.git"
+    "url": "git+https://github.com/MakersMCP/easycaptionkit.git"
   },
-  "bugs": "https://github.com/EminBudak/easycaptionkit/issues",
+  "bugs": "https://github.com/MakersMCP/easycaptionkit/issues",
   "bin": {
     "easycaptionkit": "skills/easycaptionkit/scripts/easycaptionkit.js"
   },

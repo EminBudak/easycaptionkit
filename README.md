@@ -53,20 +53,20 @@ easycaptionkit-demo/
 easycaptionkit ships as an [Agent Skill](https://agentskills.io). Install it once and your agent runs it by itself when a video needs captions:
 
 ```bash
-npx skills add EminBudak/easycaptionkit
+npx skills add MakersMCP/easycaptionkit
 ```
 
 That covers Claude Code, Codex, Cursor and the other agents the [`skills`](https://github.com/vercel-labs/skills) CLI supports. In Claude Code you can add it as a plugin instead:
 
 ```
-/plugin marketplace add EminBudak/easycaptionkit
+/plugin marketplace add MakersMCP/easycaptionkit
 /plugin install easycaptionkit@easycaptionkit
 ```
 
 In GitHub Copilot CLI it takes the same two steps:
 
 ```bash
-copilot plugin marketplace add EminBudak/easycaptionkit
+copilot plugin marketplace add MakersMCP/easycaptionkit
 copilot plugin install easycaptionkit@easycaptionkit
 ```
 
@@ -174,11 +174,11 @@ With `--libass`, ffmpeg draws the captions itself from captions.ass with its ass
 
 ## See also
 
-- [easyfontkit](https://github.com/EminBudak/easyfontkit) saves the fonts a website really uses, with their licenses.
-- [easybrandkit](https://github.com/EminBudak/easybrandkit) saves a site's real logo files, colors and fonts as a brand kit.
-- [easyscreenshotkit](https://github.com/EminBudak/easyscreenshotkit) records a demo video of a site, with the steps.json captions can follow.
-- [launch-film](https://github.com/EminBudak/launch-film) turns a site into a short launch film, and its `check` measures any video.
-- [musicfit](https://github.com/EminBudak/musicfit) fits a music track to a video cut and ducks it under a voice.
+- [easyfontkit](https://github.com/MakersMCP/easyfontkit) saves the fonts a website really uses, with their licenses.
+- [easybrandkit](https://github.com/MakersMCP/easybrandkit) saves a site's real logo files, colors and fonts as a brand kit.
+- [easyscreenshotkit](https://github.com/MakersMCP/easyscreenshotkit) records a demo video of a site, with the steps.json captions can follow.
+- [launch-film](https://github.com/MakersMCP/launch-film) turns a site into a short launch film, and its `check` measures any video.
+- [musicfit](https://github.com/MakersMCP/musicfit) fits a music track to a video cut and ducks it under a voice.
 
 ## License
 

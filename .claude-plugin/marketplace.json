@@ -14,8 +14,8 @@
       "author": {
         "name": "Emin Budak"
       },
-      "homepage": "https://github.com/EminBudak/easycaptionkit",
-      "repository": "https://github.com/EminBudak/easycaptionkit",
+      "homepage": "https://github.com/MakersMCP/easycaptionkit",
+      "repository": "https://github.com/MakersMCP/easycaptionkit",
       "license": "MIT",
       "keywords": ["skills", "captions", "subtitles", "video", "srt", "safe-zone"]
     }
